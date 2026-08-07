@@ -1,0 +1,10 @@
+package com.helpdesk.repository;
+
+import com.helpdesk.entity.Category;
+import org.springframework.data.jpa.repository.JpaRepository;
+import java.util.List;
+
+public interface CategoryRepository extends JpaRepository<Category, Long> {
+    List<Category> findByActiveTrue();
+    boolean existsByName(String name);
+}
