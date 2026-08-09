@@ -365,56 +365,94 @@ surchargeables via `VITE_DEV_API_TARGET` / `VITE_DEV_AI_TARGET`.
 
 ---
 
-## 🔄 Pipeline CI/CD
+## 🔄 Continuous Integration
 
-Le projet utilise **GitHub Actions** afin d'automatiser le processus d'intégration et de déploiement.
+L'intégration continue est assurée par **GitHub Actions**.
 
-La pipeline peut notamment effectuer les étapes suivantes :
+**Workflow :** [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
 
-```text
-Push / Pull Request
-        │
-        ▼
-┌─────────────────┐
-│ Checkout du code│
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Tests Frontend  │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Tests Backend   │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Build Frontend  │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Build Backend   │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Docker Build    │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│   Déploiement   │
-└─────────────────┘
-```
+### Déclenchement
 
-Le workflow GitHub Actions se trouve dans :
+La CI s'exécute automatiquement sur :
+
+- un **push** sur `main` ;
+- une **pull request** ciblant `main`.
+
+Les runs concurrents sur une même référence sont annulés
+(`concurrency: ci-${{ github.ref }}`), et le workflow s'exécute en
+`permissions: contents: read` — il ne publie et ne déploie **rien**.
 
 ```text
-.github/workflows/
+push / pull request  ──►  main
+                           │
+              ┌────────────┴────────────┐
+              ▼                         ▼
+        frontend-ci                backend-ci
+              │                         │
+        Checkout                   Checkout
+        Setup Node 22              Setup Java 17 (temurin)
+        Cache npm                  Cache Maven
+        npm ci                     chmod +x mvnw
+        npm run lint *             ./mvnw clean verify
+        npm run build                 └─ service PostgreSQL 16
+              │                         │
+              └────────────┬────────────┘
+                           ▼
+                       CI SUCCESS
 ```
+
+### Contrôles réellement implémentés
+
+**Frontend** (`frontend-ci`)
+
+| Étape | Commande | Bloquant |
+|---|---|---|
+| Installation | `npm ci` (depuis `package-lock.json`) | ✅ |
+| Lint | `npm run lint` | ⚠️ non — voir ci-dessous |
+| Build production | `npm run build` (Vite) | ✅ |
+| Artefact | `frontend-dist` (7 jours) | — |
+
+> ⚠️ **Lint non bloquant.** `npm run lint` remonte actuellement 70 erreurs
+> préexistantes — principalement les règles `react-hooks/set-state-in-effect`
+> et `react-hooks/immutability`, nouvelles dans `eslint-plugin-react-hooks` v7
+> (déjà en dépendance), plus des `no-unused-vars` en position d'argument. Les
+> corriger relève du code React, pas de la configuration CI. L'étape s'exécute
+> et reste visible dans le run ; retirer `continue-on-error` une fois traitée.
+
+> **Pas de tests frontend** : aucun script `test` ni runner (Vitest/Jest) n'est
+> configuré dans `frontend/package.json`. Aucune étape de test n'est déclarée
+> plutôt que d'en simuler une.
+>
+> **Pas de typecheck** : projet JavaScript, sans `tsconfig.json`.
+
+**Backend** (`backend-ci`)
+
+| Étape | Commande | Bloquant |
+|---|---|---|
+| Setup Java | `actions/setup-java` — temurin 17 | ✅ |
+| Cache Maven | `cache: maven` | — |
+| Tests + packaging | `./mvnw -B -ntp clean verify` | ✅ |
+| Artefact | `backend-jar` (7 jours) | — |
+
+`verify` enchaîne `compile → test → package → verify`. **Aucun `-DskipTests`** :
+la CI échoue si un test échoue.
+
+### PostgreSQL en CI
+
+`HelpdeskApplicationTests` est un `@SpringBootTest` qui démarre le contexte
+complet. Le projet n'a ni H2, ni Testcontainers, ni profil de test : une vraie
+base est donc nécessaire. Le job déclare un **service container `postgres:16`**
+avec healthcheck `pg_isready`, joignable sur `localhost:5432`.
+
+### Variables d'environnement de CI
+
+Les propriétés `app.jwt.secret`, `app.smtp.*` et `groq.api.key` n'ont **aucune
+valeur par défaut** : sans elles le contexte Spring ne démarre pas. Le workflow
+fournit donc des valeurs **factices, réservées à la CI** (`ci-only-...`).
+
+> **Aucun secret GitHub n'est requis pour cette CI.** Aucune vraie
+> crédential n'est utilisée : la CI n'envoie pas d'e-mail et n'appelle pas
+> l'API Groq.
 
 ---
 

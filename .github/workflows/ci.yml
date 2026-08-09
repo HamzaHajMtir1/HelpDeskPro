@@ -1,49 +1,166 @@
 # =============================================================================
-# CI — build & test  (PLACEHOLDER — not implemented yet)
+# Continuous Integration
 # =============================================================================
-# Manual trigger only for now, so this placeholder never runs on push/PR.
-# Enable the `push` / `pull_request` triggers below when the real jobs land.
+# Builds and validates the two applications independently. This workflow does
+# NOT build or publish container images and does NOT deploy anything.
 #
-# Planned scope
-# -------------
-# frontend (React 19 + Vite 8, npm, Node ^20.19 || >=22.12):
-#   - actions/setup-node with cache: npm, cache-dependency-path: frontend/package-lock.json
-#   - npm ci
-#   - npm run lint            (eslint 9, flat config in frontend/eslint.config.js)
-#   - npm test                (NOTE: no test script / test runner exists yet —
-#                              add Vitest before wiring this step)
-#   - npm run build           (vite build -> frontend/dist)
-#
-# backend (Spring Boot 3.3.5, Java 17, Maven wrapper 3.9.12):
-#   - actions/setup-java, distribution: temurin, java-version: 17, cache: maven
-#   - ./mvnw -B -ntp verify
-#   - HelpdeskApplicationTests loads the full context -> needs a database:
-#     run a postgres:16 service container and override SPRING_DATASOURCE_*,
-#     JWT_SECRET, SMTP_USER, SMTP_PASSWORD, GROQ_API_KEY from GitHub Secrets.
-#   - upload target/helpdesk-*.jar as an artifact
-#
-# docker build validation:
-#   - docker/setup-buildx-action
-#   - docker build ./frontend and ./backend (build only, no push, load: false)
-#   - docker compose config  (validate the root compose file)
+#   push / PR to main
+#         |
+#         +-- frontend-ci : npm ci -> lint -> vite build
+#         `-- backend-ci  : mvnw clean verify (against a PostgreSQL service)
 # =============================================================================
 
 name: CI
 
 on:
-  workflow_dispatch:
-  # push:
-  #   branches: [main]
-  # pull_request:
-  #   branches: [main]
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
 
+# Read-only: this workflow publishes nothing.
 permissions:
   contents: read
 
+# Supersede in-flight runs for the same ref when new commits arrive.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  placeholder:
-    name: CI placeholder
+  # ---------------------------------------------------------------------------
+  # Frontend — React 19 + Vite 8, npm
+  # ---------------------------------------------------------------------------
+  frontend-ci:
+    name: Frontend (React + Vite)
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
     steps:
-      - name: Not implemented yet
-        run: echo "CI pipeline is not implemented yet - see the comments in this file."
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          # vite@8 requires "^20.19.0 || >=22.12.0" (engines in package-lock.json).
+          # package.json declares no "engines"; 22 matches frontend/Dockerfile.
+          node-version: '22'
+          cache: npm
+          # Resolved from the repository root, not from `working-directory`.
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # NOTE: `npm run lint` currently reports 70 pre-existing errors, so this
+      # step is deliberately non-blocking. It still runs and its output/annotations
+      # are visible in the run — nothing is silenced — but it does not gate CI.
+      #
+      # Root cause (verified, not assumed):
+      #   * 13x react-hooks/set-state-in-effect + 1x react-hooks/immutability
+      #     across 12 files. These rules are NEW in eslint-plugin-react-hooks v7,
+      #     which this project already depends on (^7.0.1).
+      #   * 48x no-unused-vars, mostly argument-position bindings such as
+      #     `({ icon: Icon }) => ...` and unused `catch (e)`. The project's rule
+      #     sets only `varsIgnorePattern`, which does not cover args/caught errors.
+      #   * 5x no-empty, 3x react-refresh/only-export-components.
+      #
+      # Clearing these means real React refactoring, which is out of scope for a
+      # CI-setup change. Delete `continue-on-error` once they are addressed.
+      - name: Lint (non-blocking — see note above)
+        run: npm run lint
+        continue-on-error: true
+
+      # No `test` script exists in frontend/package.json and no test runner is
+      # installed, so there is no test step to run. Add one here once Vitest (or
+      # similar) is configured — an empty/fake test step would be worse than none.
+
+      # No `typecheck` script and no tsconfig.json — this is a plain-JS project.
+
+      - name: Build (production)
+        run: npm run build
+
+      - name: Upload frontend build
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Backend — Spring Boot 3.3.5, Java 17, Maven
+  # ---------------------------------------------------------------------------
+  backend-ci:
+    name: Backend (Spring Boot + Maven)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    # HelpdeskApplicationTests is a plain @SpringBootTest that boots the full
+    # application context. The project has no H2, no Testcontainers and no test
+    # profile, so a real PostgreSQL is genuinely required for `verify` to pass.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: helpdesk_db
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      # Service containers are reachable on localhost when ports are mapped.
+      # Set explicitly rather than relying on a profile: the default profile
+      # points at localhost:5432 and the `prod` profile at db:5432, so being
+      # explicit keeps CI independent of which profile is active.
+      SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/helpdesk_db
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: ci_test_password
+      DB_PASSWORD: ci_test_password
+      # These have NO default in application.properties, so the Spring context
+      # fails to start without them. All values below are throwaway CI-only
+      # placeholders — never real credentials, and no GitHub Secret is needed.
+      JWT_SECRET: ci-only-test-secret-with-sufficient-length-0123456789
+      SMTP_USER: ci@example.invalid
+      SMTP_PASSWORD: ci-only-not-a-real-password
+      GROQ_API_KEY: ci-only-not-a-real-key
+      FRONTEND_BASE_URL: http://localhost:3000
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          # pom.xml: <java.version>17</java.version>
+          java-version: '17'
+          distribution: temurin
+          cache: maven
+
+      # backend/mvnw is committed with git mode 100644 (not executable), so it
+      # must be made executable before it can be invoked on a Linux runner.
+      - name: Make Maven wrapper executable
+        run: chmod +x mvnw
+
+      # `verify` runs compile -> test -> package -> verify. No -DskipTests:
+      # the pipeline must fail when tests fail.
+      - name: Build and test
+        run: ./mvnw -B -ntp clean verify
+
+      - name: Upload backend JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-jar
+          path: backend/target/helpdesk-*.jar
+          retention-days: 7
