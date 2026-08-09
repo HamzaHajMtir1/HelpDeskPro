@@ -9,6 +9,7 @@
 .env
 .env.*
 *.env
+.env.example
 # The templates MUST stay tracked (no trailing comments here: in .gitignore
 # a '#' only starts a comment at the beginning of a line).
 !.env.example
