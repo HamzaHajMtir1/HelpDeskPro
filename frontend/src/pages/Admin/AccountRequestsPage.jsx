@@ -9,7 +9,7 @@ import {
 import AdminLayout from "../../layouts/AdminLayout";
 import { useToast } from "../../components/Toast";
 
-const API = "https://helpdesk.4d-gile.com/api";
+const API = "/api";
 
 /* ─── CustomSelect (identique à AdminUsers) ─── */
 const CustomSelect = ({ value, onChange, options, placeholder, dropUp = false }) => {

@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { useToast } from '../components/Toast';
 
-const API_BASE = 'https://helpdesk.4d-gile.com';
+const API_BASE = '';
 const RED      = '#E31E24';
 const RED_DARK = '#b81519';
 

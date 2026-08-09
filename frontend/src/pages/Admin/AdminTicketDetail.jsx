@@ -359,7 +359,7 @@ function HistoryTimeline({ history, loading , ticketId }) {
               <button
                 onClick={() => {
                   const token = localStorage.getItem('token');
-                  const url = `https://helpdesk.4d-gile.com/api/tickets/${ticketId}/attachments/${entry.attachmentId}/download`;
+                  const url = `/api/tickets/${ticketId}/attachments/${entry.attachmentId}/download`;
                   fetch(url, { headers: { Authorization: `Bearer ${token}` } })
                     .then(r => r.blob())
                     .then(blob => {

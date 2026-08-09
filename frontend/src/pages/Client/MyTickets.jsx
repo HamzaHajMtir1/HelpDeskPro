@@ -416,7 +416,7 @@ export default function MyTickets() {
                             <Paperclip style={{ width: 16, height: 16, color: '#3b82f6' }} />
                           </div>
                           <p style={{ fontSize: 13, color: '#374151', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', margin: 0, fontWeight: 500 }}>{a.fileName}</p>
-                          <a href={`https://helpdesk.4d-gile.com/api/tickets/${editTicket?.id}/attachments/${a.id}/download`} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+                          <a href={`/api/tickets/${editTicket?.id}/attachments/${a.id}/download`} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
                             style={{ fontSize: 12, color: '#3b82f6', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4, fontWeight: 500, padding: '4px 8px', borderRadius: 6, backgroundColor: '#eff6ff', transition: 'all 0.15s' }}
                             onMouseEnter={e => e.currentTarget.style.backgroundColor = '#dbeafe'}
                             onMouseLeave={e => e.currentTarget.style.backgroundColor = '#eff6ff'}>

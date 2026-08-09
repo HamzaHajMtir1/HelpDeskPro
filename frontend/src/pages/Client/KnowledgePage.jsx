@@ -324,7 +324,7 @@ export default function KnowledgePage() {
 
   const handleDownloadKB = (attachmentId, fileName, ticketId) => {
     const token = localStorage.getItem('token');
-    fetch(`https://helpdesk.4d-gile.com/api/tickets/${ticketId}/attachments/${attachmentId}/download`,
+    fetch(`/api/tickets/${ticketId}/attachments/${attachmentId}/download`,
       { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.blob()).then(blob => {
         const a = document.createElement('a');
@@ -336,7 +336,7 @@ export default function KnowledgePage() {
   // ✅ CHANGEMENT 1 : ajout de dlKB
   const dlKB = (storedFileName, originalName, articleId) => {
     const token = localStorage.getItem('token');
-    fetch(`https://helpdesk.4d-gile.com/api/knowledge/${articleId}/attachments/${storedFileName}/download`,
+    fetch(`/api/knowledge/${articleId}/attachments/${storedFileName}/download`,
       { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.blob()).then(blob => {
         const a = document.createElement('a');

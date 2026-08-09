@@ -1,0 +1,60 @@
+# =============================================================================
+# Security — SAST, dependency, secret & container scanning
+# (PLACEHOLDER — not implemented yet)
+# =============================================================================
+# Manual trigger only for now. Add `push`, `pull_request` and a weekly
+# `schedule` when the real jobs land.
+#
+# Planned scope
+# -------------
+# SAST / code quality (SonarQube):
+#   - sonarsource/sonarqube-scan-action
+#   - backend analysed via ./mvnw sonar:sonar (needs JaCoCo for coverage —
+#     the jacoco-maven-plugin is not in backend/pom.xml yet)
+#   - frontend analysed via sonar-project.properties
+#   - SONAR_TOKEN / SONAR_HOST_URL come from GitHub Secrets
+#
+# dependency scanning:
+#   - npm audit --audit-level=high (frontend)
+#     KNOWN ISSUE: frontend depends on xlsx@0.18.5, which has published
+#     advisories on the npm registry — expect findings on the first run.
+#   - OWASP Dependency-Check or Trivy fs on backend/pom.xml
+#   - optionally enable Dependabot / Dependency Review
+#
+# secret scanning (Gitleaks):
+#   - gitleaks/gitleaks-action with fetch-depth: 0 for full history
+#   - fail the build on any finding; add a .gitleaks.toml allow-list if needed
+#
+# container scanning (Trivy):
+#   - build the frontend and backend images locally (no registry push)
+#   - aquasecurity/trivy-action, scan-type: image,
+#     severity: HIGH,CRITICAL, ignore-unfixed: true
+#   - also trivy config on the Dockerfiles and docker-compose.yml (IaC misconfig)
+#
+# reporting:
+#   - upload SARIF via github/codeql-action/upload-sarif
+#     (requires `security-events: write`)
+# =============================================================================
+
+name: Security
+
+on:
+  workflow_dispatch:
+  # push:
+  #   branches: [main]
+  # pull_request:
+  #   branches: [main]
+  # schedule:
+  #   - cron: "0 3 * * 1"
+
+permissions:
+  contents: read
+  # security-events: write   # needed to upload SARIF results
+
+jobs:
+  placeholder:
+    name: Security placeholder
+    runs-on: ubuntu-latest
+    steps:
+      - name: Not implemented yet
+        run: echo "Security scanning is not implemented yet - see the comments in this file."

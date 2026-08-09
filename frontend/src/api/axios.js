@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: 'https://helpdesk.4D-gile.com/api',
+  baseURL: '/api',
 });
 
 // Injecte le token JWT automatiquement

@@ -91,7 +91,7 @@ export default function ClientTicketDetail() {
   // ── CORRIGÉ : utilisait event.attachmentId au lieu de attachmentId ──
   const handleDownload = (attachmentId, fileName) => {
     const token = localStorage.getItem('token');
-    const url = `https://helpdesk.4d-gile.com/api/tickets/${id}/attachments/${attachmentId}/download`;
+    const url = `/api/tickets/${id}/attachments/${attachmentId}/download`;
     fetch(url, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.blob())
       .then(blob => {

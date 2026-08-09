@@ -17,29 +17,122 @@ L'objectif est de disposer d'une architecture centralisée permettant de dévelo
 ## 🏗️ Architecture du projet
 
 ```text
-helpdesk/
+HelpDeskPro/
 │
-├── frontend/
+├── frontend/                     # React 19 + Vite 8
 │   ├── src/
 │   ├── public/
+│   ├── nginx/default.conf        # config Nginx de l'image Docker
+│   ├── nginx.conf                # vhost TLS historique (niveau hôte)
 │   ├── package.json
-│   ├── Dockerfile
+│   ├── package-lock.json
+│   ├── Dockerfile                # multi-stage : Node -> Nginx
+│   ├── .dockerignore
 │   └── ...
 │
-├── backend/
+├── backend/                      # Spring Boot 3.3.5 (Java 17, Maven)
 │   ├── src/
 │   ├── pom.xml
-│   ├── mvnw
-│   ├── Dockerfile
+│   ├── mvnw / mvnw.cmd
+│   ├── Dockerfile                # multi-stage : Maven -> JRE
+│   ├── .dockerignore
 │   └── ...
 │
 ├── .github/
 │   └── workflows/
-│       └── ci-cd.yml
+│       ├── ci.yml                # build & tests            (placeholder)
+│       ├── security.yml          # SAST / SCA / secrets / images (placeholder)
+│       └── deploy.yml            # GHCR + déploiement OVH    (placeholder)
 │
-├── docker-compose.yml
+├── docker-compose.yml            # orchestration : db + backend + frontend
+├── .env.example                  # modèle de variables (suivi par Git)
+├── .env                          # valeurs réelles (JAMAIS commité)
+├── .gitignore
 └── README.md
 ```
+
+---
+
+## 🛡️ Architecture DevSecOps
+
+Vue d'ensemble de la chaîne « code → image → scan → déploiement ».
+Le tableau distingue ce qui est **en place** de ce qui reste **à implémenter**.
+
+### Composants
+
+| Couche | Détail | État |
+|---|---|---|
+| **Frontend** | React 19 + Vite 8, npm (`package-lock.json`), Node `^20.19 \|\| >=22.12`. Build statique servi par Nginx, jamais le serveur de dev. | ✅ |
+| **Backend** | Spring Boot 3.3.5, Java 17, Maven (wrapper 3.9.12), API sur le port `8080`, contrôleurs montés sous `/api/**`. | ✅ |
+| **Base de données** | PostgreSQL 16 (service interne `db`, non exposé à l'hôte), schéma géré par `spring.jpa.hibernate.ddl-auto=update`. | ✅ |
+| **Docker** | Deux `Dockerfile` multi-stage, images finales sans sources ni outils de build, exécution en utilisateur non-root. | ✅ |
+| **Orchestration** | `docker-compose.yml` racine, réseau bridge interne `helpdesk-net`, volumes nommés (`db-data`, `backend-uploads`), `restart: unless-stopped`. | ✅ |
+| **Secrets** | Aucune valeur sensible dans le dépôt : tout passe par variables d'environnement (`.env` local, GitHub Actions Secrets en CI). | ✅ |
+| **GitHub Actions** | `ci.yml`, `security.yml`, `deploy.yml` — squelettes valides en `workflow_dispatch`, contenu décrit en commentaires. | 🚧 placeholders |
+| **Sécurité applicative** | SonarQube/SAST, scan de dépendances, Gitleaks, Trivy (image + IaC). | ⏳ à venir |
+| **Déploiement** | Publication sur GHCR puis release SSH sur le VPS OVH. | ⏳ à venir |
+
+### Topologie d'exécution
+
+```text
+                Internet
+                   │
+                   ▼  :80  (FRONTEND_HTTP_PORT)
+        ┌──────────────────────────┐
+        │  frontend  (Nginx :8080) │  bundle React + reverse proxy
+        └───────────┬──────────────┘
+                    │  /api/  →  http://backend:8080
+                    ▼
+        ┌──────────────────────────┐
+        │  backend  (Spring :8080) │  interne — aucun port publié
+        └───────────┬──────────────┘
+                    │  jdbc:postgresql://db:5432
+                    ▼
+        ┌──────────────────────────┐
+        │  db  (PostgreSQL :5432)  │  interne — aucun port publié
+        └──────────────────────────┘
+
+            réseau bridge « helpdesk-net »
+```
+
+Seul le service `frontend` est publié sur l'hôte. Le backend et la base ne sont
+joignables que depuis le réseau interne Docker.
+
+### Chaîne CI/CD visée
+
+```text
+ push / PR ──► ci.yml         lint + tests front, tests back, build des images
+     │
+     ├───────► security.yml   SonarQube (SAST) · scan de dépendances
+     │                        Gitleaks (secrets) · Trivy (image + IaC)
+     │
+     └───────► deploy.yml     build ──► push GHCR ──► SSH VPS OVH
+                              puis « docker compose pull && up -d »
+```
+
+### Sécurité — règles du dépôt
+
+- `.env` et toute variante `.env.*` sont ignorés par Git ; seul `.env.example`
+  (uniquement des placeholders vides) est suivi.
+- Clés privées, certificats, keystores et fichiers de credentials sont bloqués
+  par le `.gitignore` racine.
+- Les images n'embarquent aucun secret : la configuration est injectée au
+  démarrage via l'environnement.
+- Les secrets de la pipeline seront stockés en **GitHub Actions Secrets**
+  (`DB_PASSWORD`, `JWT_SECRET`, `SMTP_USER`, `SMTP_PASSWORD`, `GROQ_API_KEY`,
+  `VPS_HOST`, `VPS_USER`, `VPS_SSH_PRIVATE_KEY`).
+
+### Démarrage avec Docker Compose
+
+```bash
+cp .env.example .env     # puis renseigner les valeurs
+docker compose config    # validation
+docker compose up -d --build
+```
+
+> TLS : l'image frontend sert du HTTP en clair sur `8080`. La terminaison
+> HTTPS/Let's Encrypt est assurée en amont (reverse proxy de l'hôte) —
+> `frontend/nginx.conf` conserve le vhost TLS historique à titre de référence.
 
 ---
 
@@ -136,39 +229,139 @@ Le backend Spring Boot démarre ensuite avec la configuration définie dans le p
 
 ---
 
-## 🐳 Docker
+## 🐳 Docker / Local Deployment
 
-Le projet peut également être exécuté à l'aide de Docker.
+L'ensemble de la stack (frontend, backend, base de données) démarre avec une
+seule commande depuis la racine du dépôt.
 
-### Construire les images
+### 1. Prérequis
 
-```bash
-docker compose build
-```
-
-### Démarrer les services
+- **Docker Engine** 20.10+ (ou Docker Desktop)
+- **Docker Compose v2** (`docker compose`, pas `docker-compose`)
 
 ```bash
-docker compose up -d
+docker --version
+docker compose version
 ```
 
-### Vérifier les conteneurs
+### 2. Configuration de l'environnement
 
 ```bash
-docker ps
+cp .env.example .env
 ```
 
-### Consulter les logs
+Sous **Windows PowerShell** :
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Puis renseigner les variables. Celles **sans valeur par défaut** sont
+obligatoires — Compose refuse de démarrer tant qu'elles sont vides :
+
+| Variable | Obligatoire | Rôle |
+|---|---|---|
+| `DB_PASSWORD` | ✅ | Mot de passe PostgreSQL **et** `spring.datasource.password` |
+| `JWT_SECRET` | ✅ | Clé de signature JWT (HS256 → ≥ 32 octets aléatoires) |
+| `SMTP_USER` | ✅ | Login de la boîte mail OVH ; sert aussi d'expéditeur et d'`admin.email` |
+| `SMTP_PASSWORD` | ✅ | Mot de passe SMTP |
+| `GROQ_API_KEY` | ✅ | Clé API Groq (chatbot / assistant) |
+| `POSTGRES_DB` | — | Défaut : `helpdesk_db` |
+| `POSTGRES_USER` | — | Défaut : `postgres` |
+| `SPRING_PROFILES_ACTIVE` | — | Défaut : `prod` |
+| `FRONTEND_BASE_URL` | — | Défaut : `http://localhost:3000` (CORS + liens e-mail) |
+| `FRONTEND_PORT` | — | Défaut : `3000` |
+| `BACKEND_PORT` | — | Défaut : `8080` |
+| `AGENT2_URL` | — | Service Flask externe optionnel (absent de ce dépôt) |
+
+> `.env` est ignoré par Git. Ne jamais y committer de vraies valeurs.
+
+### 3. Build et démarrage
+
+```bash
+docker compose up -d --build
+```
+
+### 4. Vérifier l'état des services
+
+```bash
+docker compose ps
+```
+
+Les trois services doivent être `running`, `db` et `backend` en `(healthy)`.
+
+### 5. Consulter les logs
 
 ```bash
 docker compose logs -f
 ```
 
-### Arrêter les services
+Service par service :
+
+```bash
+docker compose logs -f frontend
+docker compose logs -f backend
+docker compose logs -f db
+```
+
+### 6. Arrêter
 
 ```bash
 docker compose down
 ```
+
+Pour supprimer aussi les données PostgreSQL et les pièces jointes :
+
+```bash
+docker compose down -v
+```
+
+### 7. Reconstruire après modification du code
+
+```bash
+docker compose up -d --build
+```
+
+### 8. URLs locales
+
+| URL | Description |
+|---|---|
+| <http://localhost:3000> | Application (React servi par Nginx) — **point d'entrée** |
+| <http://localhost:3000/api/...> | API, relayée par Nginx vers le backend |
+| <http://localhost:8080/api/...> | API en accès direct, pour tests curl/Postman |
+| — | PostgreSQL n'est **pas** publié sur l'hôte |
+
+Vérification rapide :
+
+```bash
+curl -i http://localhost:3000/healthz
+curl -i http://localhost:3000/api/auth/login -X POST -H "Content-Type: application/json" -d '{}'
+```
+
+### 9. Communication frontend → backend
+
+Le code React appelle l'API en **chemins relatifs** (`/api/...`). Le navigateur
+s'adresse donc uniquement à Nginx, qui relaie vers `http://backend:8080` sur le
+réseau interne Docker.
+
+```text
+navigateur ──► localhost:3000 ──► Nginx ──► backend:8080 ──► db:5432
+```
+
+Le nom d'hôte `backend` n'est résolvable qu'à l'intérieur du réseau Docker : il
+n'apparaît jamais dans une requête émise par le navigateur. Le préfixe `/api`
+est **conservé** lors du proxy, car les 15 contrôleurs Spring sont montés sous
+`/api/**` et aucun `server.servlet.context-path` n'est défini.
+
+> **Port backend `8080`** : publié uniquement par confort de test. En
+> production il peut être retiré du bloc `ports:` — Nginx accède au backend par
+> le réseau interne, aucune exposition publique n'est nécessaire.
+
+### 10. Développement hors Docker
+
+`npm run dev` reste fonctionnel : `vite.config.js` proxifie `/api` vers
+`http://localhost:8080` et `/ai` vers `http://localhost:5002`. Cibles
+surchargeables via `VITE_DEV_API_TARGET` / `VITE_DEV_AI_TARGET`.
 
 ---
 

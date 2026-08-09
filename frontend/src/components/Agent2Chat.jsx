@@ -6,11 +6,11 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 
-const FLASK_URL  = "https://helpdesk.4d-gile.com/ai";
+const FLASK_URL  = "/ai";
 const RED        = "#E31E24";
 const RED_DARK   = "#b81519";
 const RED_LIGHT  = "#fff1f1";
-const SPRING_URL = "https://helpdesk.4d-gile.com";
+const SPRING_URL = "";
 
 function ts()  { return new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}); }
 function uid() { return Date.now() + Math.random(); }

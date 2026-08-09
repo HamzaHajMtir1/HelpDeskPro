@@ -332,14 +332,14 @@ function ArticleModal({ article, onClose, onSave }) {
     const token = localStorage.getItem('token');
     const fd = new FormData(); fd.append('file', file);
     if (hasTicket) {
-      const r = await fetch(`https://helpdesk.4d-gile.com/api/tickets/${article.ticketId}/attachments`,
+      const r = await fetch(`/api/tickets/${article.ticketId}/attachments`,
         { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd });
       if (!r.ok) throw new Error('Upload échoué');
       const u = await r.json();
       await api.patch(`/tickets/${article.ticketId}/solution/attachment/${u.id}`);
       return u;
     } else {
-      const r = await fetch(`https://helpdesk.4d-gile.com/api/knowledge/${article.id}/attachments`,
+      const r = await fetch(`/api/knowledge/${article.id}/attachments`,
         { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd });
       if (!r.ok) throw new Error('Upload échoué');
       return r.json();
@@ -592,7 +592,7 @@ function ArticleDetail({ article, onClose, onEdit }) {
   // Téléchargement PJ ticket (via attachment ID)
   const dl = (id, name, tid) => {
     const token = localStorage.getItem('token');
-    fetch(`https://helpdesk.4d-gile.com/api/tickets/${tid}/attachments/${id}/download`,
+    fetch(`/api/tickets/${tid}/attachments/${id}/download`,
       { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.blob()).then(b => {
         const a = document.createElement('a');
@@ -604,7 +604,7 @@ function ArticleDetail({ article, onClose, onEdit }) {
   // ✅ Téléchargement PJ manuelle KB (via storedFileName)
   const dlKB = (storedFileName, originalName, articleId) => {
     const token = localStorage.getItem('token');
-    fetch(`https://helpdesk.4d-gile.com/api/knowledge/${articleId}/attachments/${storedFileName}/download`,
+    fetch(`/api/knowledge/${articleId}/attachments/${storedFileName}/download`,
       { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.blob()).then(b => {
         const a = document.createElement('a');

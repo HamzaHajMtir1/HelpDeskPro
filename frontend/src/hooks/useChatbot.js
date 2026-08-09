@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import axios from "axios";
 
-const API = "https://helpdesk.4d-gile.com/api/chatbot";
+const API = "/api/chatbot";
 
 const WELCOME_MESSAGE = {
   role: "assistant",

@@ -1,0 +1,24 @@
+# Keep the build context small and never ship secrets into an image layer.
+node_modules
+dist
+build
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+.git
+.gitignore
+.github
+.vscode
+.idea
+npm-debug.log*
+yarn-error.log*
+coverage
+.nyc_output
+Dockerfile
+.dockerignore
+docker-compose.yml
+docker-compose.*.yml
+README.md

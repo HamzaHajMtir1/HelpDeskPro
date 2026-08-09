@@ -1,6 +1,6 @@
 import { useState, useRef } from "react";
  
-const API_BASE = "https://helpdesk.4d-gile.com/ai";
+const API_BASE = "/ai";
  
 export default function AttachmentUpload({ incidentId, onAnalysisReady }) {
   const [uploading, setUploading] = useState(false);

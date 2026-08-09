@@ -680,7 +680,7 @@ export default function TechTicketDetail() {
 
   const handleDownload = useCallback((attachmentId, fileName) => {
     const token = localStorage.getItem('token');
-    const url   = `https://helpdesk.4d-gile.com/api/tickets/${id}/attachments/${attachmentId}/download`;
+    const url   = `/api/tickets/${id}/attachments/${attachmentId}/download`;
     fetch(url, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.blob())
       .then(blob => {

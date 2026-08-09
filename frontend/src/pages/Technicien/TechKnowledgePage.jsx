@@ -227,14 +227,14 @@ function EditModal({ article, onClose, onSaved }) {
     const token = localStorage.getItem('token');
     const fd = new FormData(); fd.append('file', file);
     if (article.ticketId) {
-      const r = await fetch(`https://helpdesk.4d-gile.com/api/tickets/${article.ticketId}/attachments`,
+      const r = await fetch(`/api/tickets/${article.ticketId}/attachments`,
         { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd });
       if (!r.ok) throw new Error('Upload échoué');
       const u = await r.json();
       await api.patch(`/tickets/${article.ticketId}/solution/attachment/${u.id}`);
       return u;
     } else {
-      const r = await fetch(`https://helpdesk.4d-gile.com/api/knowledge/${article.id}/attachments`,
+      const r = await fetch(`/api/knowledge/${article.id}/attachments`,
         { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd });
       if (!r.ok) throw new Error('Upload échoué');
       return r.json();
@@ -626,7 +626,7 @@ export default function TechKnowledgePage() {
   // Téléchargement PJ ticket (via attachment ID)
   const handleDownloadKB = (attachmentId, fileName, ticketId) => {
     const token = localStorage.getItem('token');
-    fetch(`https://helpdesk.4d-gile.com/api/tickets/${ticketId}/attachments/${attachmentId}/download`,
+    fetch(`/api/tickets/${ticketId}/attachments/${attachmentId}/download`,
       { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.blob()).then(blob => {
         const a = document.createElement('a');
@@ -638,7 +638,7 @@ export default function TechKnowledgePage() {
   // Téléchargement PJ manuelle KB (via storedFileName)
   const handleDownloadManual = (storedFileName, originalName, articleId) => {
     const token = localStorage.getItem('token');
-    fetch(`https://helpdesk.4d-gile.com/api/knowledge/${articleId}/attachments/${storedFileName}/download`,
+    fetch(`/api/knowledge/${articleId}/attachments/${storedFileName}/download`,
       { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.blob()).then(blob => {
         const a = document.createElement('a');

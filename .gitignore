@@ -1,0 +1,181 @@
+# =============================================================================
+# HelpDeskPro — root .gitignore
+# Per-module rules also live in frontend/.gitignore and backend/.gitignore.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Secrets & environment  (highest priority — nothing below may be committed)
+# -----------------------------------------------------------------------------
+.env
+.env.*
+*.env
+# The templates MUST stay tracked (no trailing comments here: in .gitignore
+# a '#' only starts a comment at the beginning of a line).
+!.env.example
+!.env.sample
+
+# Spring local/secret profiles
+**/application-local.properties
+**/application-local.yml
+**/application-secrets.properties
+**/application-secrets.yml
+**/application-prod-local.properties
+**/application-prod-local.yml
+
+# Private keys, certificates, keystores
+*.pem
+*.key
+*.crt
+*.cer
+*.der
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.truststore
+*.asc
+*.gpg
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+*.ppk
+.ssh/
+
+# Credential / secret files
+secrets/
+.secrets/
+credentials
+credentials.*
+*credentials*.json
+*-credentials.json
+service-account*.json
+.netrc
+.npmrc
+.htpasswd
+gitleaks-report.json
+trivy-report.*
+
+# Let's Encrypt material (mounted at runtime, never committed)
+letsencrypt/
+certbot/
+
+# -----------------------------------------------------------------------------
+# Frontend (Node / Vite)
+# -----------------------------------------------------------------------------
+node_modules/
+jspm_packages/
+frontend/dist/
+frontend/build/
+dist/
+.vite/
+*.tsbuildinfo
+.npm
+.eslintcache
+.stylelintcache
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
+.pnpm-store/
+*.tgz
+
+# -----------------------------------------------------------------------------
+# Backend (Java / Maven)
+# -----------------------------------------------------------------------------
+target/
+build/
+!**/src/main/**/target/
+!**/src/test/**/target/
+!**/src/main/**/build/
+!**/src/test/**/build/
+*.class
+*.jar
+*.war
+*.ear
+.gradle/
+HELP.md
+
+# Runtime uploads (user attachments — data, not source)
+backend/uploads/
+uploads/
+
+# -----------------------------------------------------------------------------
+# Tests & coverage
+# -----------------------------------------------------------------------------
+coverage/
+*.lcov
+.nyc_output/
+htmlcov/
+**/target/site/jacoco/
+jacoco.exec
+*.exec
+test-results/
+playwright-report/
+.scannerwork/
+
+# -----------------------------------------------------------------------------
+# Logs
+# -----------------------------------------------------------------------------
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+hs_err_pid*
+replay_pid*
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# -----------------------------------------------------------------------------
+# IDE / editor
+# -----------------------------------------------------------------------------
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/*
+!.vscode/extensions.json
+.vscode-test/
+.project
+.classpath
+.settings/
+.factorypath
+.apt_generated/
+.springBeans
+.sts4-cache/
+nbproject/private/
+nbbuild/
+nbdist/
+.nb-gradle/
+*.swp
+*.swo
+*~
+
+# -----------------------------------------------------------------------------
+# OS
+# -----------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# -----------------------------------------------------------------------------
+# Docker / misc
+# -----------------------------------------------------------------------------
+docker-compose.override.yml
+*.pid
+*.seed
+*.pid.lock
+tmp/
+temp/
+.cache/

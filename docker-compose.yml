@@ -1,0 +1,120 @@
+# HelpDeskPro — local Docker Compose stack.
+#
+#   browser -> http://localhost:3000 -> frontend (Nginx :80)
+#                                          |  /api/  (internal network)
+#                                          v
+#                                       backend (Spring Boot :8080)
+#                                          |  jdbc:postgresql://db:5432
+#                                          v
+#                                       db (PostgreSQL 16)
+#
+# No credential is hardcoded here: every sensitive value comes from the shell
+# or from a local .env file. See .env.example.
+#
+#   cp .env.example .env      # then fill it in (.env is git-ignored)
+#   docker compose up -d --build
+
+name: helpdesk
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL
+  #
+  # Required by the project, not an invention: pom.xml pulls
+  # spring-boot-starter-data-jpa + the org.postgresql driver, and
+  # application-prod.properties points at jdbc:postgresql://db:5432/helpdesk_db.
+  # The service is named `db` to match that URL, so the app still works even if
+  # SPRING_DATASOURCE_URL below is removed.
+  #
+  # The port is deliberately NOT published — nothing outside the Docker network
+  # needs it. Uncomment the `ports` block only for local DB debugging.
+  # ---------------------------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    container_name: helpdesk-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-helpdesk_db}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set - copy .env.example to .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    # ports:
+    #   - "5432:5432"   # local debugging only
+    networks:
+      - helpdesk-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-helpdesk_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # ---------------------------------------------------------------------------
+  # Spring Boot API
+  #
+  # Published on :8080 for direct API testing (curl/Postman). In production this
+  # `ports` block can simply be deleted: the browser only ever talks to Nginx,
+  # which reaches the API over the internal network as http://backend:8080.
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: helpdesk-backend:local
+    container_name: helpdesk-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
+      # Spring relaxed binding maps SPRING_DATASOURCE_* -> spring.datasource.*
+      # Host is the `db` service name: inside the backend container, localhost
+      # would refer to the backend itself.
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-helpdesk_db}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set - copy .env.example to .env}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set - copy .env.example to .env}
+      SMTP_USER: ${SMTP_USER:?SMTP_USER must be set - copy .env.example to .env}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:?SMTP_PASSWORD must be set - copy .env.example to .env}
+      GROQ_API_KEY: ${GROQ_API_KEY:?GROQ_API_KEY must be set - copy .env.example to .env}
+      # Non-secret. Drives the CORS origin bean and the links placed in e-mails.
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-http://localhost:3000}
+      # Optional external Flask agent (not part of this repo); keeps the
+      # application's own @Value default when unset.
+      AGENT2_URL: ${AGENT2_URL:-http://localhost:5002}
+    volumes:
+      # Attachments are written to the relative path "uploads/" under WORKDIR /app.
+      - backend-uploads:/app/uploads
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    networks:
+      - helpdesk-network
+
+  # ---------------------------------------------------------------------------
+  # React build served by Nginx, which also reverse-proxies /api/ to the backend.
+  # This is the only service the browser talks to.
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: helpdesk-frontend:local
+    container_name: helpdesk-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    networks:
+      - helpdesk-network
+
+networks:
+  helpdesk-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  backend-uploads:
