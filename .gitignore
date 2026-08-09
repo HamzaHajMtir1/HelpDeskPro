@@ -115,6 +115,8 @@ jacoco.exec
 test-results/
 playwright-report/
 .scannerwork/
+.sonar/
+sonar-scanner-*.zip
 
 # -----------------------------------------------------------------------------
 # Logs

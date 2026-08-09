@@ -135,6 +135,33 @@
                     </excludes>
                 </configuration>
             </plugin>
+
+            <!-- Code coverage for SonarQube.
+                 prepare-agent binds to the default `initialize` phase and sets the
+                 `argLine` property, which Surefire picks up automatically (this POM
+                 declares no Surefire argLine of its own, so nothing is overwritten).
+                 The report goal is bound explicitly to `verify` so that
+                 target/site/jacoco/jacoco.xml exists after `mvn clean verify`. -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>0.8.15</version>
+                <executions>
+                    <execution>
+                        <id>jacoco-prepare-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>jacoco-report</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
     </build>
 
