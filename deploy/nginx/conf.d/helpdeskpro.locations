@@ -1,0 +1,76 @@
+# =============================================================================
+# Shared location blocks, included by both the HTTP and HTTPS server blocks so
+# the routing rules exist in exactly one place.
+# =============================================================================
+
+# --- security headers ------------------------------------------------------
+server_tokens off;
+add_header X-Content-Type-Options  "nosniff"                    always;
+add_header X-Frame-Options         "SAMEORIGIN"                 always;
+add_header Referrer-Policy         "strict-origin-when-cross-origin" always;
+add_header X-XSS-Protection        "0"                          always;
+add_header Permissions-Policy      "geolocation=(), microphone=(), camera=()" always;
+
+# Attachment uploads pass through here. NOTE: the effective ceiling is Spring
+# Boot's unconfigured multipart default (1MB/file, 10MB/request), which is lower.
+client_max_body_size 25m;
+
+# --- edge healthcheck (used by the nginx container healthcheck) ------------
+location = /healthz {
+    access_log off;
+    add_header Content-Type text/plain;
+    return 200 "ok\n";
+}
+
+# --- Spring Boot API -------------------------------------------------------
+# All 15 controllers are mapped under /api/** and server.servlet.context-path is
+# not set, so the /api prefix must reach Spring UNCHANGED. $request_uri keeps the
+# original path and percent-encoding (attachment filenames depend on that).
+# Do NOT add a trailing slash to proxy_pass here — that would strip /api and 404.
+location /api/ {
+    proxy_pass http://helpdeskpro_backend$request_uri;
+
+    proxy_http_version 1.1;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host  $host;
+
+    proxy_connect_timeout 10s;
+    proxy_send_timeout    60s;
+    proxy_read_timeout    60s;
+}
+
+# --- optional external AI agent -------------------------------------------
+# The Flask "agent2" service is NOT part of this repository and is not in
+# docker-compose.prod.yml. These routes return 502 until you deploy it and add
+# an `agent2` service to the internal network. The prefix is stripped to match
+# how the frontend calls it (`${FLASK_URL}/agent2/...` -> Flask sees /agent2/...).
+location /ai/ {
+    resolver 127.0.0.11 ipv6=off valid=30s;
+    set $agent2_upstream http://agent2:5002;
+    rewrite ^/ai/(.*)$ /$1 break;
+    proxy_pass $agent2_upstream;
+
+    proxy_http_version 1.1;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    proxy_read_timeout 120s;
+    proxy_buffering off;   # the agent streams responses (SSE)
+}
+
+# --- React SPA -------------------------------------------------------------
+# The frontend image already serves its own SPA fallback, so this just forwards.
+location / {
+    proxy_pass http://helpdeskpro_frontend;
+
+    proxy_http_version 1.1;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}

@@ -9,11 +9,15 @@
 .env
 .env.*
 *.env
-.env.example
-# The templates MUST stay tracked (no trailing comments here: in .gitignore
-# a '#' only starts a comment at the beginning of a line).
-!.env.example
-!.env.sample
+# The *.example templates MUST stay tracked. Negations come last because the
+# last matching rule wins, and they are anchored with **/ so they also apply
+# in subdirectories such as deploy/.
+# (No trailing comments on pattern lines: in .gitignore a '#' only starts a
+#  comment at the beginning of a line.)
+!**/.env.example
+!**/.env.sample
+!**/.env.prod.example
+!**/.env.*.example
 
 # Spring local/secret profiles
 **/application-local.properties

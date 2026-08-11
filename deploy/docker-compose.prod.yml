@@ -1,0 +1,154 @@
+# =============================================================================
+# HelpDeskPro — PRODUCTION stack (OVH VPS)
+# =============================================================================
+#   Internet :80/:443
+#        |
+#     nginx (reverse proxy + TLS termination)
+#        |-- /        -> frontend  (static React, internal :80)
+#        `-- /api/    -> backend   (Spring Boot, internal :8080)
+#                              |
+#                            db (PostgreSQL, internal only)
+#
+# Unlike the root docker-compose.yml this file does NOT build from source:
+# it PULLS images already built, scanned and published by CI. The VPS never
+# compiles anything.
+#
+# Usage on the VPS (from /opt/helpdeskpro):
+#     cp .env.prod.example .env      # then fill it in, chmod 600 .env
+#     docker compose -f docker-compose.prod.yml pull
+#     docker compose -f docker-compose.prod.yml up -d
+#
+# NOTHING secret belongs in this file — every value comes from .env.
+# =============================================================================
+
+name: helpdeskpro-prod
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL — private. No `ports:` mapping, so it is unreachable from the
+  # Internet; it is only addressable as `db` on the internal network.
+  # ---------------------------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    container_name: helpdeskpro-db
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - helpdeskpro-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    logging: &default-logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ---------------------------------------------------------------------------
+  # Spring Boot API — internal only, reached through Nginx.
+  # ---------------------------------------------------------------------------
+  backend:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required, e.g. ghcr.io/<owner>/helpdeskpro-backend:<tag>}
+    container_name: helpdeskpro-backend
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required (>= 32 chars)}
+      SMTP_USER: ${SMTP_USER:?SMTP_USER is required}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:?SMTP_PASSWORD is required}
+      GROQ_API_KEY: ${GROQ_API_KEY:?GROQ_API_KEY is required}
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:?FRONTEND_BASE_URL is required, e.g. https://helpdesk.example.com}
+      AGENT2_URL: ${AGENT2_URL:-http://localhost:5002}
+      JAVA_OPTS: ${JAVA_OPTS:--XX:MaxRAMPercentage=75.0}
+    volumes:
+      # Ticket/KB attachments are written to the relative path "uploads/".
+      - backend-uploads:/app/uploads
+    expose:
+      - "8080"
+    networks:
+      - helpdeskpro-internal
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # React bundle served by Nginx. Internal only — the edge proxy fronts it.
+  # ---------------------------------------------------------------------------
+  frontend:
+    image: ${FRONTEND_IMAGE:?FRONTEND_IMAGE is required, e.g. ghcr.io/<owner>/helpdeskpro-frontend:<tag>}
+    container_name: helpdeskpro-frontend
+    restart: always
+    depends_on:
+      backend:
+        condition: service_healthy
+    expose:
+      - "80"
+    networks:
+      - helpdeskpro-internal
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # Edge reverse proxy — the ONLY service published to the Internet.
+  # TLS certificates and ACME challenges are shared with certbot via volumes.
+  # ---------------------------------------------------------------------------
+  nginx:
+    image: nginx:1.29-alpine
+    container_name: helpdeskpro-nginx
+    restart: always
+    depends_on:
+      - frontend
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - certbot-conf:/etc/letsencrypt:ro
+      - certbot-www:/var/www/certbot:ro
+    networks:
+      - helpdeskpro-internal
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+
+  # ---------------------------------------------------------------------------
+  # Certbot — renewal only. It does NOT run at `up` time; issue the first
+  # certificate manually with deploy/scripts/init-letsencrypt.sh once DNS
+  # resolves to this VPS. Until then Nginx serves plain HTTP.
+  # ---------------------------------------------------------------------------
+  certbot:
+    image: certbot/certbot:latest
+    container_name: helpdeskpro-certbot
+    restart: unless-stopped
+    volumes:
+      - certbot-conf:/etc/letsencrypt
+      - certbot-www:/var/www/certbot
+    # Re-check twice a day; certbot only renews when close to expiry.
+    entrypoint: /bin/sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done"
+    logging: *default-logging
+
+networks:
+  helpdeskpro-internal:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  backend-uploads:
+  certbot-conf:
+  certbot-www:

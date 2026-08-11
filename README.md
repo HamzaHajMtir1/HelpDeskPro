@@ -22,29 +22,37 @@ HelpDeskPro/
 ├── frontend/                     # React 19 + Vite 8
 │   ├── src/
 │   ├── public/
-│   ├── nginx/default.conf        # config Nginx de l'image Docker
-│   ├── nginx.conf                # vhost TLS historique (niveau hôte)
+│   ├── nginx.conf                # config Nginx de l'image (SPA + proxy /api)
 │   ├── package.json
 │   ├── package-lock.json
-│   ├── Dockerfile                # multi-stage : Node -> Nginx
+│   ├── Dockerfile                # multi-stage : Node -> Nginx (non-root)
 │   ├── .dockerignore
 │   └── ...
 │
 ├── backend/                      # Spring Boot 3.3.5 (Java 17, Maven)
 │   ├── src/
-│   ├── pom.xml
+│   ├── pom.xml                   # + jacoco-maven-plugin 0.8.15
 │   ├── mvnw / mvnw.cmd
-│   ├── Dockerfile                # multi-stage : Maven -> JRE
+│   ├── Dockerfile                # multi-stage : Maven -> JRE (non-root)
 │   ├── .dockerignore
 │   └── ...
 │
 ├── .github/
 │   └── workflows/
-│       ├── ci.yml                # build & tests            (placeholder)
-│       ├── security.yml          # SAST / SCA / secrets / images (placeholder)
-│       └── deploy.yml            # GHCR + déploiement OVH    (placeholder)
+│       ├── ci.yml                # build, tests, SonarQube, sécurité
+│       └── cd.yml                # publication GHCR + déploiement OVH
 │
-├── docker-compose.yml            # orchestration : db + backend + frontend
+├── deploy/                       # production OVH — pull les images, ne build pas
+│   ├── docker-compose.prod.yml
+│   ├── .env.prod.example
+│   ├── nginx/conf.d/             # reverse proxy + HTTPS
+│   └── scripts/                  # deploy.sh, init-letsencrypt.sh
+│
+├── docs/
+│   └── SECRETS.md                # tous les secrets GitHub requis
+│
+├── docker-compose.yml            # dev local : db + backend + frontend
+├── sonar-project.properties      # configuration SonarQube (monorepo)
 ├── .env.example                  # modèle de variables (suivi par Git)
 ├── .env                          # valeurs réelles (JAMAIS commité)
 ├── .gitignore
@@ -365,94 +373,161 @@ surchargeables via `VITE_DEV_API_TARGET` / `VITE_DEV_AI_TARGET`.
 
 ---
 
-## 🔄 Continuous Integration
+## 🔄 CI/CD — GitHub Actions
 
-L'intégration continue est assurée par **GitHub Actions**.
+Deux workflows, strictement séparés :
 
-**Workflow :** [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
+| Workflow | Fichier | Déclenchement | Rôle |
+|---|---|---|---|
+| **CI** | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | push sur `main`, PR vers `main` | build, tests, qualité, sécurité. **Ne publie et ne déploie rien.** |
+| **CD** | [`.github/workflows/cd.yml`](.github/workflows/cd.yml) | uniquement après une CI **réussie** sur `main` | publie les images sur GHCR, puis déploie sur le VPS OVH |
 
-### Déclenchement
-
-La CI s'exécute automatiquement sur :
-
-- un **push** sur `main` ;
-- une **pull request** ciblant `main`.
-
-Les runs concurrents sur une même référence sont annulés
-(`concurrency: ci-${{ github.ref }}`), et le workflow s'exécute en
-`permissions: contents: read` — il ne publie et ne déploie **rien**.
+La CD utilise `workflow_run` : elle ne peut donc pas démarrer depuis une pull
+request, et jamais depuis un commit qui n'a pas passé la CI.
 
 ```text
-push / pull request  ──►  main
-                           │
-              ┌────────────┴────────────┐
-              ▼                         ▼
-        frontend-ci                backend-ci
-              │                         │
-        Checkout                   Checkout
-        Setup Node 22              Setup Java 17 (temurin)
-        Cache npm                  Cache Maven
-        npm ci                     chmod +x mvnw
-        npm run lint *             ./mvnw clean verify
-        npm run build                 └─ service PostgreSQL 16
-              │                         │
-              └────────────┬────────────┘
-                           ▼
-                       CI SUCCESS
+push / PR ──► CI
+              ├── frontend        npm ci → lint* → vite build
+              ├── backend         mvnw clean verify (service PostgreSQL 16)
+              │                     └── JaCoCo → SonarQube → Quality Gate
+              ├── codeql          SAST Java + JavaScript
+              ├── secret-scan     Gitleaks (historique complet)
+              ├── dependency-scan Trivy fs (Maven + npm) + Trivy config (IaC)
+              └── docker          build des images → Trivy image → SBOM Syft
+                        │
+                    ci-success  (statut unique pour la protection de branche)
+                        │
+                        ▼  (push sur main uniquement)
+                       CD
+              ├── publish   → ghcr.io/<owner>/helpdeskpro-{backend,frontend}
+              └── deploy    → SSH OVH → deploy.sh → healthcheck → rollback si KO
 ```
 
-### Contrôles réellement implémentés
+\* Le lint est **non bloquant** : 70 erreurs préexistantes (règles
+`react-hooks/set-state-in-effect` et `react-hooks/immutability`, nouvelles dans
+`eslint-plugin-react-hooks` v7). Les corriger relève du code React. Retirer
+`continue-on-error` une fois traité.
 
-**Frontend** (`frontend-ci`)
+> **Pas de tests frontend** : `frontend/package.json` ne déclare aucun script
+> `test` et aucun runner n'est installé. Aucune étape n'est simulée.
 
-| Étape | Commande | Bloquant |
-|---|---|---|
-| Installation | `npm ci` (depuis `package-lock.json`) | ✅ |
-| Lint | `npm run lint` | ⚠️ non — voir ci-dessous |
-| Build production | `npm run build` (Vite) | ✅ |
-| Artefact | `frontend-dist` (7 jours) | — |
+### SonarQube
 
-> ⚠️ **Lint non bloquant.** `npm run lint` remonte actuellement 70 erreurs
-> préexistantes — principalement les règles `react-hooks/set-state-in-effect`
-> et `react-hooks/immutability`, nouvelles dans `eslint-plugin-react-hooks` v7
-> (déjà en dépendance), plus des `no-unused-vars` en position d'argument. Les
-> corriger relève du code React, pas de la configuration CI. L'étape s'exécute
-> et reste visible dans le run ; retirer `continue-on-error` une fois traitée.
+L'analyse tourne dans le job `backend`, après `mvnw clean verify` (qui produit
+`backend/target/classes` et `jacoco.xml`, tous deux requis). La configuration
+vient de [`sonar-project.properties`](sonar-project.properties) — elle n'est
+pas dupliquée dans le workflow.
 
-> **Pas de tests frontend** : aucun script `test` ni runner (Vitest/Jest) n'est
-> configuré dans `frontend/package.json`. Aucune étape de test n'est déclarée
-> plutôt que d'en simuler une.
->
-> **Pas de typecheck** : projet JavaScript, sans `tsconfig.json`.
+`-Dsonar.qualitygate.wait=true` fait échouer la CI quand le Quality Gate échoue.
 
-**Backend** (`backend-ci`)
+L'étape **s'auto-désactive** si `SONAR_TOKEN` / `SONAR_HOST_URL` sont absents,
+pour que la CI reste utilisable avant la mise en place de SonarQube.
 
-| Étape | Commande | Bloquant |
-|---|---|---|
-| Setup Java | `actions/setup-java` — temurin 17 | ✅ |
-| Cache Maven | `cache: maven` | — |
-| Tests + packaging | `./mvnw -B -ntp clean verify` | ✅ |
-| Artefact | `backend-jar` (7 jours) | — |
+> ⚠️ Un SonarQube sur `http://localhost:9000` **n'est pas joignable** depuis un
+> runner GitHub. Il faut soit l'exposer publiquement en HTTPS, soit un runner
+> self-hosted, soit SonarCloud.
 
-`verify` enchaîne `compile → test → package → verify`. **Aucun `-DskipTests`** :
-la CI échoue si un test échoue.
+### Quality Gate recommandé
 
-### PostgreSQL en CI
+`Quality Gates → Create`, conditions **sur le New Code uniquement** :
 
-`HelpdeskApplicationTests` est un `@SpringBootTest` qui démarre le contexte
-complet. Le projet n'a ni H2, ni Testcontainers, ni profil de test : une vraie
-base est donc nécessaire. Le job déclare un **service container `postgres:16`**
-avec healthcheck `pg_isready`, joignable sur `localhost:5432`.
+| Condition | Valeur |
+|---|---|
+| New reliability rating | A |
+| New security rating | A |
+| New maintainability rating | A |
+| New coverage | ≥ 80 % |
+| New duplicated lines | ≤ 3 % |
 
-### Variables d'environnement de CI
+Ne pas verrouiller sur la couverture globale : le legacy est à ~7 %, tout serait bloqué.
 
-Les propriétés `app.jwt.secret`, `app.smtp.*` et `groq.api.key` n'ont **aucune
-valeur par défaut** : sans elles le contexte Spring ne démarre pas. Le workflow
-fournit donc des valeurs **factices, réservées à la CI** (`ci-only-...`).
+---
 
-> **Aucun secret GitHub n'est requis pour cette CI.** Aucune vraie
-> crédential n'est utilisée : la CI n'envoie pas d'e-mail et n'appelle pas
-> l'API Groq.
+## 🛡️ Sécurité — contrôles automatisés
+
+Chaîne volontairement sans redondance (pas d'OWASP Dependency-Check ni de
+`npm audit` : Trivy `fs` couvre déjà Maven **et** npm).
+
+| Contrôle | Outil | Portée | Bloquant ? |
+|---|---|---|---|
+| SAST | **CodeQL** | Java + JavaScript | ✅ |
+| Qualité / SAST | **SonarQube** | monorepo + couverture | ✅ via Quality Gate |
+| Dépendances | **Trivy `fs`** | `pom.xml`, `package-lock.json` | ✅ HIGH/CRITICAL **corrigeables** |
+| Secrets | **Gitleaks** | historique Git complet | ✅ |
+| Image conteneur | **Trivy `image`** | images frontend + backend | rapport (SARIF) |
+| IaC / Dockerfile | **Trivy `config`** | Dockerfiles, compose | rapport |
+| SBOM | **Syft** | SPDX JSON par image | artefact (30 j) |
+
+`ignore-unfixed: true` + seuil HIGH/CRITICAL : le bruit non corrigeable ne bloque
+jamais une merge. Les résultats SARIF remontent dans l'onglet **Security**.
+
+---
+
+## 🚀 Déploiement en production (OVH VPS)
+
+> Rien n'est déployé automatiquement tant que les secrets OVH ne sont pas
+> configurés — le job `deploy` s'auto-ignore.
+
+```text
+Internet :443
+   │  HTTPS (Let's Encrypt)
+   ▼
+ nginx (reverse proxy, seul service publié)
+   ├── /      → frontend (React/Nginx, interne)
+   └── /api/  → backend  (Spring Boot, interne)
+                    │
+                  db  (PostgreSQL — jamais exposé)
+```
+
+Fichiers : [`deploy/`](deploy/)
+
+| Fichier | Rôle |
+|---|---|
+| `docker-compose.prod.yml` | stack de prod — **pull** des images validées, aucun build sur le VPS |
+| `.env.prod.example` | modèle de variables (placeholders uniquement) |
+| `nginx/conf.d/helpdeskpro.conf` | vhost — HTTP d'abord, bloc HTTPS commenté |
+| `nginx/conf.d/helpdeskpro.locations` | routes partagées HTTP/HTTPS + en-têtes de sécurité |
+| `scripts/deploy.sh` | pull → up → vérification santé → **rollback** si échec |
+| `scripts/init-letsencrypt.sh` | première émission du certificat (dry-run d'abord) |
+
+### Mise en place initiale sur le VPS
+
+```bash
+sudo mkdir -p /opt/helpdeskpro && sudo chown "$USER" /opt/helpdeskpro
+cd /opt/helpdeskpro
+# copier deploy/ depuis le dépôt
+cp .env.prod.example .env && nano .env && chmod 600 .env
+chmod +x scripts/*.sh
+docker compose -f docker-compose.prod.yml up -d
+```
+
+Puis, une fois le DNS en place :
+
+```bash
+DOMAIN=helpdesk.example.com EMAIL=admin@example.com ./scripts/init-letsencrypt.sh
+```
+
+Le script vérifie la résolution DNS et l'accessibilité du challenge ACME, puis
+fait un `--dry-run` avant la vraie demande (Let's Encrypt limite à 5 échecs/heure).
+
+### Sécurité de la base
+
+PostgreSQL n'a **aucun** mapping de port : il n'est joignable que par le réseau
+Docker interne. Ne jamais ajouter `ports: 5432` en production.
+
+> ⚠️ `POSTGRES_PASSWORD` n'est appliqué qu'à la **première** création du volume.
+> Changer `.env` ensuite ne suffit pas — il faut `ALTER USER` (voir
+> [`docs/SECRETS.md`](docs/SECRETS.md)).
+
+---
+
+## 🔑 Secrets GitHub requis
+
+Tableau complet : **[`docs/SECRETS.md`](docs/SECRETS.md)**.
+
+Résumé : `SONAR_TOKEN` et `SONAR_HOST_URL` (CI, optionnels) ; `OVH_HOST`,
+`OVH_USER`, `OVH_SSH_PRIVATE_KEY` (CD, requis pour déployer) ; `OVH_SSH_PORT` et
+`PUBLIC_HEALTH_URL` (CD, optionnels). `GITHUB_TOKEN` est fourni automatiquement.
 
 ---
 
