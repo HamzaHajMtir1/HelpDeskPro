@@ -5,6 +5,7 @@ import io.jsonwebtoken.*;
 import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import java.nio.charset.StandardCharsets;
 import java.security.Key;
 import java.util.Date;
 
@@ -18,7 +19,10 @@ public class JwtUtil {
     private long expiration;
 
     private Key getKey() {
-        return Keys.hmacShaKeyFor(secret.getBytes());
+        // Explicit charset: String.getBytes() uses the platform default, so the
+        // same secret would derive a different key on a machine with a
+        // different default encoding, silently invalidating every token.
+        return Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     }
 
     public String generateToken(String email, String role) {
@@ -39,7 +43,10 @@ public class JwtUtil {
         try {
             getClaims(token);
             return true;
-        } catch (JwtException e) {
+        } catch (JwtException | IllegalArgumentException e) {
+            // JJWT throws IllegalArgumentException — not JwtException — for a
+            // null/blank token. Catching only JwtException let that escape as
+            // an unhandled 500 instead of a clean "invalid token" rejection.
             return false;
         }
     }

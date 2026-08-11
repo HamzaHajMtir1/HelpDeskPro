@@ -4,6 +4,7 @@ import com.helpdesk.dto.KnowledgeArticleDTO;
 import com.helpdesk.entity.KnowledgeArticle;
 import com.helpdesk.repository.KnowledgeArticleRepository;
 import com.helpdesk.service.KnowledgeService;
+import com.helpdesk.util.SecureFileStorage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
@@ -35,6 +36,11 @@ public class KnowledgeController {
 
     // URL Flask Agent 2 — rebuild index automatique après chaque modif KB
     private static final String FLASK_REBUILD_URL = "http://localhost:5002/agent2/rebuild-index";
+
+    // Racine de stockage des pièces jointes KB. Déclarée une seule fois : les
+    // trois endpoints (upload / suppression / téléchargement) répétaient
+    // auparavant le même littéral, ce qui rendait toute correction partielle.
+    private static final String KB_UPLOAD_ROOT = "uploads/knowledge";
 
     // ─────────────────────────────────────────────────────────────────────────
     // HELPER — Appel Flask pour rebuild FAISS index en arrière-plan
@@ -168,14 +174,16 @@ public class KnowledgeController {
             KnowledgeArticle article = service.findById(id);
 
             // Dossier de stockage : uploads/knowledge/{articleId}/
-            String uploadDir = "uploads/knowledge/" + id + "/";
-            File   dir       = new File(uploadDir);
-            if (!dir.exists()) dir.mkdirs();
+            // `id` is a Long, so it cannot inject a path segment.
+            Path uploadDir = SecureFileStorage.ensureDirectory(
+                    Paths.get(KB_UPLOAD_ROOT, String.valueOf(id)));
 
             String originalName = file.getOriginalFilename();
-            // Préfixe timestamp pour éviter les conflits de noms
-            String fileName = System.currentTimeMillis() + "_" + originalName;
-            Path   dest     = Paths.get(uploadDir + fileName);
+            // Sanitise BEFORE prefixing: a crafted "../../evil" must not survive
+            // as "1700000000_../../evil".
+            String fileName = SecureFileStorage.timestampedName(
+                    originalName, System.currentTimeMillis());
+            Path   dest     = SecureFileStorage.resolveInside(uploadDir, fileName);
             Files.write(dest, file.getBytes());
 
             // Stocker le nom dans manualAttachments
@@ -207,8 +215,11 @@ public class KnowledgeController {
         try {
             KnowledgeArticle article = service.findById(id);
 
-            // Supprimer du disque
-            Path filePath = Paths.get("uploads/knowledge/" + id + "/" + fileName);
+            // Supprimer du disque. fileName is a @PathVariable and therefore
+            // attacker-controlled: resolveInside rejects anything that would
+            // escape the article's own directory.
+            Path filePath = SecureFileStorage.resolveInside(
+                    Paths.get(KB_UPLOAD_ROOT, String.valueOf(id)), fileName);
             Files.deleteIfExists(filePath);
 
             // Supprimer de la liste
@@ -232,7 +243,10 @@ public class KnowledgeController {
             @PathVariable Long id,
             @PathVariable String fileName) {
         try {
-            Path filePath = Paths.get("uploads/knowledge/" + id + "/" + fileName);
+            // fileName is attacker-controlled; keep the read inside the
+            // article's own directory.
+            Path filePath = SecureFileStorage.resolveInside(
+                    Paths.get(KB_UPLOAD_ROOT, String.valueOf(id)), fileName);
             org.springframework.core.io.Resource resource =
                     new org.springframework.core.io.UrlResource(filePath.toUri());
 

@@ -71,6 +71,10 @@ services:
       SMTP_USER: ${SMTP_USER:?SMTP_USER is required}
       SMTP_PASSWORD: ${SMTP_PASSWORD:?SMTP_PASSWORD is required}
       GROQ_API_KEY: ${GROQ_API_KEY:?GROQ_API_KEY is required}
+      # Requis uniquement lors de la toute premiere initialisation de la
+      # base : en prod, l application refuse de demarrer si le compte admin
+      # doit etre cree et que cette variable est absente.
+      ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:-}
       FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:?FRONTEND_BASE_URL is required, e.g. https://helpdesk.example.com}
       AGENT2_URL: ${AGENT2_URL:-http://localhost:5002}
       JAVA_OPTS: ${JAVA_OPTS:--XX:MaxRAMPercentage=75.0}
