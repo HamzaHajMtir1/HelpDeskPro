@@ -8,6 +8,7 @@ import com.helpdesk.entity.User;
 import com.helpdesk.repository.AttachmentRepository;
 import com.helpdesk.repository.TicketRepository;
 import com.helpdesk.repository.UserRepository;
+import com.helpdesk.util.SecureFileStorage;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
@@ -44,11 +45,13 @@ public class AttachmentService {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new RuntimeException("Utilisateur non trouvé"));
 
-        Path uploadPath = Paths.get(UPLOAD_DIR);
-        if (!Files.exists(uploadPath)) Files.createDirectories(uploadPath);
+        Path uploadPath = SecureFileStorage.ensureDirectory(Paths.get(UPLOAD_DIR));
 
-        String fileName = System.currentTimeMillis() + "_" + file.getOriginalFilename();
-        Path filePath = uploadPath.resolve(fileName);
+        // getOriginalFilename() is attacker-controlled: sanitise before it is
+        // ever used to build a path, otherwise "../../x" escapes UPLOAD_DIR.
+        String fileName = SecureFileStorage.timestampedName(
+                file.getOriginalFilename(), System.currentTimeMillis());
+        Path filePath = SecureFileStorage.resolveInside(uploadPath, fileName);
         Files.copy(file.getInputStream(), filePath, StandardCopyOption.REPLACE_EXISTING);
 
         Attachment attachment = Attachment.builder()

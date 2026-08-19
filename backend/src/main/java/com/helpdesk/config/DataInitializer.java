@@ -12,6 +12,7 @@ import com.helpdesk.repository.TicketStatusRepository;
 import com.helpdesk.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -22,6 +23,17 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 @Slf4j
 public class DataInitializer {
 
+    /**
+     * Seeds reference data and the bootstrap administrator.
+     *
+     * <p>The administrator e-mail and password used to be literals in this
+     * class. This repository is public, so that published a working credential
+     * for an internet-facing helpdesk. They now come from configuration
+     * ({@code app.admin.email} / {@code app.admin.password}, bound from
+     * {@code ADMIN_EMAIL} / {@code ADMIN_PASSWORD}) and are declared WITHOUT a
+     * default: an unset variable must fail the boot loudly rather than quietly
+     * reinstate a known password. Neither value is ever logged.
+     */
     @Bean
     CommandLineRunner initData(
             UserRepository userRepo,
@@ -29,20 +41,26 @@ public class DataInitializer {
             CategoryRepository categoryRepo,
             PriorityRepository priorityRepo,
             TicketStatusRepository statusRepo,
-            SystemSettingRepository settingRepo) {
+            SystemSettingRepository settingRepo,
+            @Value("${app.admin.email}")    String adminEmail,
+            @Value("${app.admin.password}") String adminPassword) {
 
         return args -> {
 
             // ── Admin ──────────────────────────────────────────
-            if (!userRepo.existsByEmail("admin@helpdesk.com")) {
+            // Created only when absent, so an existing deployment is untouched.
+            // mustChangePassword(true) forces a rotation at first login, so even
+            // the provisioning password is not a durable credential.
+            if (!userRepo.existsByEmail(adminEmail)) {
                 userRepo.save(User.builder()
-                        .firstName("Administrateur").lastName("Admin")
-                        .email("admin@helpdesk.com")
-                        .password(encoder.encode("Admin1234!"))
+                        .firstName("Super").lastName("Admin")
+                        .email(adminEmail)
+                        .password(encoder.encode(adminPassword))
                         .role(User.Role.ADMIN)
-                        .mustChangePassword(false).enabled(true)
+                        .mustChangePassword(true)
+                        .enabled(true)
                         .build());
-                log.info(">>> Admin créé");
+                log.info("Admin account created for {}", adminEmail);
             }
 
             // ── Catégories ─────────────────────────────────────

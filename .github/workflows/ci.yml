@@ -1,13 +1,9 @@
 # =============================================================================
-# Continuous Integration
+# CI — build, test, quality and security
 # =============================================================================
-# Builds and validates the two applications independently. This workflow does
-# NOT build or publish container images and does NOT deploy anything.
-#
-#   push / PR to main
-#         |
-#         +-- frontend-ci : npm ci -> lint -> vite build
-#         `-- backend-ci  : mvnw clean verify (against a PostgreSQL service)
+# Builds and validates both applications, runs the DevSecOps controls, and
+# validates that the container images build. It publishes NOTHING and deploys
+# NOTHING — that is cd.yml, which runs only after this workflow succeeds on main.
 # =============================================================================
 
 name: CI
@@ -18,91 +14,72 @@ on:
   pull_request:
     branches: [main]
 
-# Read-only: this workflow publishes nothing.
 permissions:
   contents: read
+  security-events: write   # required to upload SARIF to the Security tab
 
-# Supersede in-flight runs for the same ref when new commits arrive.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  JAVA_VERSION: '17'
+  NODE_VERSION: '22'
+
 jobs:
   # ---------------------------------------------------------------------------
-  # Frontend — React 19 + Vite 8, npm
+  # Frontend — React 19 + Vite 8 (npm)
   # ---------------------------------------------------------------------------
-  frontend-ci:
-    name: Frontend (React + Vite)
+  frontend:
+    name: Frontend build
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: frontend
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          # vite@8 requires "^20.19.0 || >=22.12.0" (engines in package-lock.json).
-          # package.json declares no "engines"; 22 matches frontend/Dockerfile.
-          node-version: '22'
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          # Resolved from the repository root, not from `working-directory`.
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
         run: npm ci
 
-      # NOTE: `npm run lint` currently reports 70 pre-existing errors, so this
-      # step is deliberately non-blocking. It still runs and its output/annotations
-      # are visible in the run — nothing is silenced — but it does not gate CI.
-      #
-      # Root cause (verified, not assumed):
-      #   * 13x react-hooks/set-state-in-effect + 1x react-hooks/immutability
-      #     across 12 files. These rules are NEW in eslint-plugin-react-hooks v7,
-      #     which this project already depends on (^7.0.1).
-      #   * 48x no-unused-vars, mostly argument-position bindings such as
-      #     `({ icon: Icon }) => ...` and unused `catch (e)`. The project's rule
-      #     sets only `varsIgnorePattern`, which does not cover args/caught errors.
-      #   * 5x no-empty, 3x react-refresh/only-export-components.
-      #
-      # Clearing these means real React refactoring, which is out of scope for a
-      # CI-setup change. Delete `continue-on-error` once they are addressed.
-      - name: Lint (non-blocking — see note above)
+      # NON-BLOCKING on purpose. `npm run lint` currently reports 70 pre-existing
+      # errors: 13x react-hooks/set-state-in-effect + 1x react-hooks/immutability
+      # (rules new in eslint-plugin-react-hooks v7, which the project already
+      # depends on), 48x no-unused-vars, 5x no-empty, 3x react-refresh.
+      # Clearing them is real React refactoring, not a CI concern.
+      # Remove continue-on-error once they are fixed.
+      - name: Lint (non-blocking — pre-existing findings)
         run: npm run lint
         continue-on-error: true
 
-      # No `test` script exists in frontend/package.json and no test runner is
-      # installed, so there is no test step to run. Add one here once Vitest (or
-      # similar) is configured — an empty/fake test step would be worse than none.
+      # No `test` script and no runner installed in frontend/package.json, so
+      # there is no test step. Add one here once Vitest is configured.
 
-      # No `typecheck` script and no tsconfig.json — this is a plain-JS project.
-
-      - name: Build (production)
+      - name: Build
         run: npm run build
 
-      - name: Upload frontend build
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: frontend-dist
           path: frontend/dist
           retention-days: 7
 
   # ---------------------------------------------------------------------------
-  # Backend — Spring Boot 3.3.5, Java 17, Maven
+  # Backend — Spring Boot 3.3.5 / Java 17 / Maven, + SonarQube quality gate
   # ---------------------------------------------------------------------------
-  backend-ci:
-    name: Backend (Spring Boot + Maven)
+  backend:
+    name: Backend build, test & SonarQube
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: backend
 
-    # HelpdeskApplicationTests is a plain @SpringBootTest that boots the full
-    # application context. The project has no H2, no Testcontainers and no test
-    # profile, so a real PostgreSQL is genuinely required for `verify` to pass.
+    # HelpdeskApplicationTests is a plain @SpringBootTest booting the full
+    # context. No H2, no Testcontainers, no test profile => a real PostgreSQL
+    # is genuinely required.
     services:
       postgres:
         image: postgres:16
@@ -110,8 +87,7 @@ jobs:
           POSTGRES_DB: helpdesk_db
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: ci_test_password
-        ports:
-          - 5432:5432
+        ports: ['5432:5432']
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -119,17 +95,13 @@ jobs:
           --health-retries 5
 
     env:
-      # Service containers are reachable on localhost when ports are mapped.
-      # Set explicitly rather than relying on a profile: the default profile
-      # points at localhost:5432 and the `prod` profile at db:5432, so being
-      # explicit keeps CI independent of which profile is active.
       SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/helpdesk_db
       SPRING_DATASOURCE_USERNAME: postgres
       SPRING_DATASOURCE_PASSWORD: ci_test_password
       DB_PASSWORD: ci_test_password
-      # These have NO default in application.properties, so the Spring context
-      # fails to start without them. All values below are throwaway CI-only
-      # placeholders — never real credentials, and no GitHub Secret is needed.
+      # Throwaway CI-only values. These properties have no defaults, so the
+      # Spring context cannot start without them. No GitHub Secret is needed:
+      # CI sends no mail and calls no external API.
       JWT_SECRET: ci-only-test-secret-with-sufficient-length-0123456789
       SMTP_USER: ci@example.invalid
       SMTP_PASSWORD: ci-only-not-a-real-password
@@ -137,30 +109,248 @@ jobs:
       FRONTEND_BASE_URL: http://localhost:3000
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
+      - uses: actions/checkout@v4
         with:
-          # pom.xml: <java.version>17</java.version>
-          java-version: '17'
+          fetch-depth: 0    # Sonar needs full history for new-code/blame
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
           distribution: temurin
           cache: maven
 
-      # backend/mvnw is committed with git mode 100644 (not executable), so it
-      # must be made executable before it can be invoked on a Linux runner.
+      # backend/mvnw is committed with git mode 100644 (not executable).
       - name: Make Maven wrapper executable
         run: chmod +x mvnw
+        working-directory: backend
 
-      # `verify` runs compile -> test -> package -> verify. No -DskipTests:
-      # the pipeline must fail when tests fail.
-      - name: Build and test
+      # `verify` = compile -> test -> package -> verify, and jacoco:report is
+      # bound to verify. No -DskipTests: CI must fail when tests fail.
+      - name: Build, test and generate coverage
         run: ./mvnw -B -ntp clean verify
+        working-directory: backend
 
-      - name: Upload backend JAR
-        uses: actions/upload-artifact@v4
+      - name: Check the JaCoCo report was produced
+        run: test -f backend/target/site/jacoco/jacoco.xml
+
+      # --- SonarQube ---------------------------------------------------------
+      # Skipped automatically when the secrets are absent, so CI stays usable
+      # before SonarQube is reachable from GitHub. NOTE: a SonarQube running on
+      # localhost is NOT reachable from a GitHub-hosted runner — see README.
+      - name: Detect SonarQube configuration
+        id: sonarcfg
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        run: |
+          if [ -n "$SONAR_TOKEN" ] && [ -n "$SONAR_HOST_URL" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::SONAR_TOKEN / SONAR_HOST_URL not set - SonarQube analysis and quality gate skipped."
+          fi
+
+      # sonar-project.properties at the repo root drives sources, exclusions,
+      # sonar.java.binaries and the JaCoCo path. Not duplicated here.
+      # qualitygate.wait makes the scanner block on the gate and exit non-zero
+      # when it fails, so CI fails with it.
+      - name: SonarQube analysis + quality gate
+        if: steps.sonarcfg.outputs.enabled == 'true'
+        uses: SonarSource/sonarqube-scan-action@v4
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        with:
+          args: -Dsonar.qualitygate.wait=true
+
+      - uses: actions/upload-artifact@v4
         with:
           name: backend-jar
           path: backend/target/helpdesk-*.jar
           retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # SAST — CodeQL for both languages
+  # ---------------------------------------------------------------------------
+  codeql:
+    name: CodeQL SAST (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: java-kotlin
+            build-mode: manual
+          - language: javascript-typescript
+            build-mode: none
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        if: matrix.language == 'java-kotlin'
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
+          cache: maven
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      # Compile without tests: CodeQL only needs the bytecode, and the tests
+      # would require a database this job deliberately does not run.
+      - name: Compile backend for CodeQL
+        if: matrix.language == 'java-kotlin'
+        run: |
+          chmod +x mvnw
+          ./mvnw -B -ntp -DskipTests compile
+        working-directory: backend
+
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:${{ matrix.language }}
+
+  # ---------------------------------------------------------------------------
+  # Secret scanning — full history
+  # ---------------------------------------------------------------------------
+  secret-scan:
+    name: Secret scan (Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # scan history, not just the tip
+
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: 'true'
+
+  # ---------------------------------------------------------------------------
+  # Dependency + IaC scanning (Trivy covers both Maven and npm, so no separate
+  # npm audit / OWASP Dependency-Check — that would duplicate the same finding.)
+  # ---------------------------------------------------------------------------
+  dependency-scan:
+    name: Dependency & IaC scan (Trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Trivy — dependency vulnerabilities (SARIF)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scanners: vuln
+          format: sarif
+          output: trivy-deps.sarif
+          severity: 'HIGH,CRITICAL'
+          ignore-unfixed: true
+
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-deps.sarif
+          category: trivy-dependencies
+
+      # Fail the build on fixable HIGH/CRITICAL only, so low-severity and
+      # unfixable noise never blocks a merge.
+      - name: Trivy — fail on fixable HIGH/CRITICAL dependencies
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scanners: vuln
+          format: table
+          severity: 'HIGH,CRITICAL'
+          ignore-unfixed: true
+          exit-code: '1'
+
+      # Dockerfile / compose misconfiguration. Reported, not blocking.
+      - name: Trivy — IaC & Dockerfile misconfiguration
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: config
+          format: table
+          severity: 'HIGH,CRITICAL'
+          exit-code: '0'
+
+  # ---------------------------------------------------------------------------
+  # Container images — build, scan, and generate SBOMs. Nothing is pushed here.
+  # ---------------------------------------------------------------------------
+  docker:
+    name: Docker build & image scan (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    needs: [frontend, backend]
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [frontend, backend]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image (load locally, never pushed)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.service }}
+          push: false
+          load: true
+          tags: helpdeskpro-${{ matrix.service }}:ci
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      - name: Trivy — image vulnerabilities (SARIF)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: image
+          image-ref: helpdeskpro-${{ matrix.service }}:ci
+          format: sarif
+          output: trivy-image-${{ matrix.service }}.sarif
+          severity: 'HIGH,CRITICAL'
+          ignore-unfixed: true
+
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-image-${{ matrix.service }}.sarif
+          category: trivy-image-${{ matrix.service }}
+
+      - name: Generate SBOM (Syft, SPDX JSON)
+        uses: anchore/sbom-action@v0
+        with:
+          image: helpdeskpro-${{ matrix.service }}:ci
+          format: spdx-json
+          artifact-name: sbom-${{ matrix.service }}.spdx.json
+          output-file: sbom-${{ matrix.service }}.spdx.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.service }}
+          path: sbom-${{ matrix.service }}.spdx.json
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # Single required status check for branch protection.
+  # ---------------------------------------------------------------------------
+  ci-success:
+    name: CI success
+    runs-on: ubuntu-latest
+    needs: [frontend, backend, codeql, secret-scan, dependency-scan, docker]
+    if: always()
+    steps:
+      - name: Verify every required job succeeded
+        run: |
+          echo "frontend=${{ needs.frontend.result }}"
+          echo "backend=${{ needs.backend.result }}"
+          echo "codeql=${{ needs.codeql.result }}"
+          echo "secret-scan=${{ needs.secret-scan.result }}"
+          echo "dependency-scan=${{ needs.dependency-scan.result }}"
+          echo "docker=${{ needs.docker.result }}"
+          [ "${{ needs.frontend.result }}"        = "success" ] || exit 1
+          [ "${{ needs.backend.result }}"         = "success" ] || exit 1
+          [ "${{ needs.codeql.result }}"          = "success" ] || exit 1
+          [ "${{ needs.secret-scan.result }}"     = "success" ] || exit 1
+          [ "${{ needs.dependency-scan.result }}" = "success" ] || exit 1
+          [ "${{ needs.docker.result }}"          = "success" ] || exit 1
+          echo "All CI jobs passed."

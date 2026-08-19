@@ -1,0 +1,186 @@
+# =============================================================================
+# CD — publish images to GHCR, then deploy to the OVH VPS
+# =============================================================================
+# Runs ONLY after the CI workflow has completed successfully on main, so images
+# are never published from an unvalidated commit and never from a pull request.
+#
+#   CI success (main) -> build & push to GHCR -> deploy over SSH -> verify health
+#
+# The deploy job is additionally gated on the `production` GitHub Environment,
+# so you can require a manual approval, and it self-skips while the OVH secrets
+# are absent. Nothing is deployed until you configure them.
+# =============================================================================
+
+name: CD
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  # Manual re-deploy of an already-published commit.
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Existing image tag to deploy (default: latest)'
+        required: false
+        default: 'latest'
+
+permissions:
+  contents: read
+  packages: write      # push to GHCR
+
+concurrency:
+  group: cd-production
+  cancel-in-progress: false   # never interrupt a deployment mid-flight
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build and publish. `workflow_run` fires on the default branch, so the
+  # triggering commit must be taken from the event payload, NOT github.sha.
+  # ---------------------------------------------------------------------------
+  publish:
+    name: Build & push images to GHCR
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    outputs:
+      sha: ${{ steps.ref.outputs.sha }}
+      backend_image: ${{ steps.ref.outputs.backend_image }}
+      frontend_image: ${{ steps.ref.outputs.frontend_image }}
+    steps:
+      - name: Resolve the commit that passed CI
+        id: ref
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            SHA="${{ github.event.workflow_run.head_sha }}"
+          else
+            SHA="${{ github.sha }}"
+          fi
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          {
+            echo "sha=$SHA"
+            echo "owner=$OWNER"
+            echo "backend_image=${{ env.REGISTRY }}/$OWNER/helpdeskpro-backend:$SHA"
+            echo "frontend_image=${{ env.REGISTRY }}/$OWNER/helpdeskpro-frontend:$SHA"
+          } >> "$GITHUB_OUTPUT"
+          echo "Publishing from commit $SHA"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.ref.outputs.sha }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      # GITHUB_TOKEN is injected by Actions — no registry password is stored.
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push backend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ${{ steps.ref.outputs.backend_image }}
+            ${{ env.REGISTRY }}/${{ steps.ref.outputs.owner }}/helpdeskpro-backend:latest
+          labels: |
+            org.opencontainers.image.revision=${{ steps.ref.outputs.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Build & push frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: true
+          tags: |
+            ${{ steps.ref.outputs.frontend_image }}
+            ${{ env.REGISTRY }}/${{ steps.ref.outputs.owner }}/helpdeskpro-frontend:latest
+          labels: |
+            org.opencontainers.image.revision=${{ steps.ref.outputs.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+      - name: Summary
+        run: |
+          {
+            echo "### Images published"
+            echo ""
+            echo '- `${{ steps.ref.outputs.backend_image }}`'
+            echo '- `${{ steps.ref.outputs.frontend_image }}`'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Deploy to the OVH VPS. Self-skips until the OVH secrets exist.
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Deploy to OVH VPS
+    runs-on: ubuntu-latest
+    needs: publish
+    environment: production      # add required reviewers here for manual approval
+    steps:
+      - name: Check whether OVH deployment is configured
+        id: cfg
+        env:
+          OVH_HOST: ${{ secrets.OVH_HOST }}
+          OVH_USER: ${{ secrets.OVH_USER }}
+          OVH_SSH_PRIVATE_KEY: ${{ secrets.OVH_SSH_PRIVATE_KEY }}
+          PUBLIC_HEALTH_URL: ${{ secrets.PUBLIC_HEALTH_URL }}
+        run: |
+          if [ -n "$OVH_HOST" ] && [ -n "$OVH_USER" ] && [ -n "$OVH_SSH_PRIVATE_KEY" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::OVH_HOST / OVH_USER / OVH_SSH_PRIVATE_KEY not set - deployment skipped. Images were still published to GHCR."
+          fi
+          # The `secrets` context is NOT available in step-level `if:`, so the
+          # presence of the optional health URL is surfaced as a step output.
+          if [ -n "$PUBLIC_HEALTH_URL" ]; then
+            echo "health=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "health=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # deploy.sh already pulls, restarts, verifies health and ROLLS BACK to the
+      # previous image tags if the new release does not come up healthy.
+      - name: Deploy over SSH
+        if: steps.cfg.outputs.enabled == 'true'
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.OVH_HOST }}
+          username: ${{ secrets.OVH_USER }}
+          key: ${{ secrets.OVH_SSH_PRIVATE_KEY }}
+          port: ${{ secrets.OVH_SSH_PORT || 22 }}
+          command_timeout: 15m
+          script_stop: true
+          envs: BACKEND_IMAGE,FRONTEND_IMAGE,REGISTRY_USER,REGISTRY_TOKEN
+          script: |
+            set -Eeuo pipefail
+            cd /opt/helpdeskpro
+            echo "$REGISTRY_TOKEN" | docker login ghcr.io -u "$REGISTRY_USER" --password-stdin
+            ./scripts/deploy.sh "$BACKEND_IMAGE" "$FRONTEND_IMAGE"
+            docker logout ghcr.io
+        env:
+          BACKEND_IMAGE: ${{ needs.publish.outputs.backend_image }}
+          FRONTEND_IMAGE: ${{ needs.publish.outputs.frontend_image }}
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify the public endpoint
+        if: steps.cfg.outputs.enabled == 'true' && steps.cfg.outputs.health == 'true'
+        env:
+          URL: ${{ secrets.PUBLIC_HEALTH_URL }}
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$URL" || echo 000)
+          echo "GET $URL -> $code"
+          [ "$code" = "200" ] || { echo "::error::Public health check failed ($code)"; exit 1; }

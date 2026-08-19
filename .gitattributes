@@ -1,0 +1,40 @@
+# =============================================================================
+# Line-ending policy
+# =============================================================================
+# The repository is developed on Windows but everything below is executed on
+# Linux (Docker images, GitHub runners, the OVH VPS). A CRLF line ending in a
+# shell script makes the kernel fail with:
+#     bad interpreter: /usr/bin/env bash^M: no such file or directory
+# so these files are pinned to LF regardless of the developer's platform.
+# =============================================================================
+
+* text=auto
+
+# Scripts and Linux-consumed configuration — always LF
+*.sh            text eol=lf
+mvnw            text eol=lf
+Dockerfile      text eol=lf
+*.dockerignore  text eol=lf
+*.conf          text eol=lf
+*.locations     text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.properties    text eol=lf
+.env.example    text eol=lf
+*.env.example   text eol=lf
+
+# Windows-only
+*.cmd           text eol=crlf
+*.bat           text eol=crlf
+
+# Binary — never touch
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.jar binary
+*.zip binary
+*.pdf binary
