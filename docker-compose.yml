@@ -79,9 +79,8 @@ services:
       SMTP_USER: ${SMTP_USER:?SMTP_USER must be set - copy .env.example to .env}
       SMTP_PASSWORD: ${SMTP_PASSWORD:?SMTP_PASSWORD must be set - copy .env.example to .env}
       GROQ_API_KEY: ${GROQ_API_KEY:?GROQ_API_KEY must be set - copy .env.example to .env}
-      # Mot de passe du compte admin initial (jamais journalisé).
-      # Sans valeur, un mot de passe aléatoire est généré hors profil prod.
-      ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:-}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?ADMIN_EMAIL must be set - copy .env.example to .env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set - copy .env.example to .env}
       # Non-secret. Drives the CORS origin bean and the links placed in e-mails.
       FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-http://localhost:3000}
       # Optional external Flask agent (not part of this repo); keeps the
