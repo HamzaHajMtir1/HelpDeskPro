@@ -1,0 +1,120 @@
+# =============================================================================
+# HelpDeskPro — PHASE 3 production cutover (OVH VPS)
+# =============================================================================
+# Install as /opt/helpdeskpro/docker-compose.cutover.yml
+#
+# NOT named docker-compose.prod.yml on purpose: deploy/scripts/deploy.sh:17 and
+# .github/workflows/cd.yml already own that filename and expect a different
+# stack shape (registry images, plus `db` and `nginx` services). Reusing the
+# name would make the CD automation run against this file and fail.
+#
+# Backend + frontend ONLY. There is deliberately no db service: the EXISTING
+# `postgres` container is reused via the network alias `db`.
+#
+# -----------------------------------------------------------------------------
+# PREREQUISITES — run in this exact order. Steps 1-6 are non-destructive.
+# -----------------------------------------------------------------------------
+#  1. git clone <repo> /opt/helpdeskpro/repo
+#  2. cp /opt/helpdeskpro/repo/deploy/vps/nginx.prod.conf /opt/helpdeskpro/nginx.prod.conf
+#     (a MISSING bind source is auto-created by Docker AS A DIRECTORY; nginx then
+#      exits with "default.conf is a directory" while holding :80/:443)
+#  3. mkdir -p /opt/helpdeskpro/certbot-www /opt/helpdeskpro/uploads
+#  4. Migrate attachments, then fix ownership to the image's runtime user
+#     (verified: uid=100(spring) gid=101(spring) — do NOT assume 1000):
+#       sudo docker cp helpdesk-app:/app/uploads/. /opt/helpdeskpro/uploads/
+#       sudo cp -a /home/helpdeskadmin/uploads/.    /opt/helpdeskpro/uploads/
+#       sudo chown -R 100:101 /opt/helpdeskpro/uploads
+#  5. docker network create helpdesk-net
+#     docker network connect --alias db     helpdesk-net postgres
+#     docker network connect --alias agent2 helpdesk-net agent2-api
+#     (rollback: docker network disconnect helpdesk-net <container>)
+#  6. FRESH DUMP immediately before the switch — ddl-auto=update rewrites the
+#     schema on first boot and `compose down` cannot un-apply DDL:
+#       docker exec postgres pg_dump -U <user> -Fc <db> > /opt/helpdeskpro/pre-cutover-$(date +%F).dump
+#  7. Free the ports BEFORE anything starts, or the backend migrates the live
+#     schema and only THEN the frontend dies on "port is already allocated":
+#       docker stop helpdeskadmin-frontend-1
+#  8. docker compose -f docker-compose.cutover.yml up -d
+#
+# ROLLBACK (verify each line before moving on):
+#       docker compose -f docker-compose.cutover.yml down --timeout 10
+#       ss -ltnp | grep -E ':(80|443)\b'     # must print nothing
+#       docker start helpdeskadmin-frontend-1
+#       curl -sfo /dev/null -w '%{http_code}' https://helpdesk.4d-gile.com/
+# =============================================================================
+
+name: helpdeskpro-cutover
+
+services:
+  backend:
+    build:
+      context: ./repo/backend
+      dockerfile: Dockerfile
+    image: helpdeskpro-backend:cutover
+    container_name: helpdeskpro-cutover-backend
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      # `:?` guards are load-bearing. Compose substitutes an EMPTY STRING for an
+      # unset variable and only warns; an empty POSTGRES_DB would produce
+      # jdbc:postgresql://db:5432/ and, with ddl-auto=update, create the whole
+      # helpdesk schema in the wrong database on the LIVE postgres.
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:?POSTGRES_DB is required}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:?POSTGRES_USER is required}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required (>= 32 chars)}
+      SMTP_USER: ${SMTP_USER:?SMTP_USER is required}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:?SMTP_PASSWORD is required}
+      GROQ_API_KEY: ${GROQ_API_KEY:?GROQ_API_KEY is required}
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:?FRONTEND_BASE_URL is required}
+      AGENT2_URL: ${AGENT2_URL:?AGENT2_URL is required}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?ADMIN_EMAIL is required}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
+    volumes:
+      - /opt/helpdeskpro/uploads:/app/uploads
+    networks:
+      helpdesk-net:
+        aliases: [backend]
+    logging: &default-logging
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  frontend:
+    build:
+      context: ./repo/frontend
+      dockerfile: Dockerfile
+    image: helpdeskpro-frontend:cutover
+    container_name: helpdeskpro-cutover-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    # TRADE-OFF: the image ships USER nginx, but /etc/letsencrypt/live is
+    # drwx------ root, so a non-root master cannot read privkey.pem. Running the
+    # master as root is the standard nginx pattern — workers still drop to the
+    # `nginx` user, so request handling stays unprivileged.
+    user: root
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Scoped to THIS domain only. Mounting all of /etc/letsencrypt into a
+      # root, internet-facing container would expose the private keys of the
+      # other tenants on this shared VPS (caddy, iqraa). Both paths are needed:
+      # live/ contains symlinks into ../../archive/.
+      - /etc/letsencrypt/live/helpdesk.4d-gile.com:/etc/letsencrypt/live/helpdesk.4d-gile.com:ro
+      - /etc/letsencrypt/archive/helpdesk.4d-gile.com:/etc/letsencrypt/archive/helpdesk.4d-gile.com:ro
+      - /opt/helpdeskpro/certbot-www:/var/www/certbot
+      - /opt/helpdeskpro/nginx.prod.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      helpdesk-net:
+        aliases: [frontend]
+    logging: *default-logging
+
+networks:
+  # external + explicit name is load-bearing: without it Compose would create
+  # `helpdeskpro-cutover_helpdesk-net`, and the manually attached postgres /
+  # agent2-api would NOT be on the network this stack joins — `db` would not
+  # resolve and the backend would fail to reach the database.
+  helpdesk-net:
+    external: true
+    name: helpdesk-net

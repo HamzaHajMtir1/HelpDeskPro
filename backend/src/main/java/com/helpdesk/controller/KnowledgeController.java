@@ -228,6 +228,12 @@ public class KnowledgeController {
 
             log.info("[KB] PJ supprimée de l'article {} : {}", id, fileName);
             return ResponseEntity.ok(Map.of("deleted", true));
+        } catch (IllegalArgumentException e) {
+            // Traversal attempt rejected by SecureFileStorage. Answer 400 with a
+            // fixed message: the generic handler below would return 500 and echo
+            // e.getMessage(), disclosing internal paths.
+            log.warn("[KB] Nom de fichier rejeté (article {})", id);
+            return ResponseEntity.badRequest().body(Map.of("error", "Invalid file name"));
         } catch (Exception e) {
             log.error("[KB] Erreur suppression PJ : {}", e.getMessage());
             return ResponseEntity.status(500).body(Map.of("error", e.getMessage()));
@@ -265,6 +271,11 @@ public class KnowledgeController {
                     .header("Content-Disposition", "attachment; filename=\"" + displayName + "\"")
                     .contentType(org.springframework.http.MediaType.parseMediaType(contentType))
                     .body(resource);
+        } catch (IllegalArgumentException e) {
+            // Same guard as deleteAttachment. This method is typed
+            // ResponseEntity<Resource>, so the 400 carries no body.
+            log.warn("[KB] Nom de fichier rejeté au téléchargement (article {})", id);
+            return ResponseEntity.badRequest().build();
         } catch (Exception e) {
             log.error("[KB] Erreur téléchargement PJ : {}", e.getMessage());
             return ResponseEntity.status(500).build();
