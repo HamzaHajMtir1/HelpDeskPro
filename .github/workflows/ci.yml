@@ -253,6 +253,10 @@ jobs:
           # offline-scan skips remote POM resolution; jar-level detection via
           # the image scan is unaffected.
           TRIVY_OFFLINE_SCAN: 'true'
+          # The DB defaults to ghcr.io, which rate-limits GitHub runners hard
+          # (TOOMANYREQUESTS). List mirrors first; Trivy falls back in order.
+          TRIVY_DB_REPOSITORY: 'public.ecr.aws/aquasecurity/trivy-db:2,mirror.gcr.io/aquasec/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2'
+          TRIVY_JAVA_DB_REPOSITORY: 'public.ecr.aws/aquasecurity/trivy-java-db:1,mirror.gcr.io/aquasec/trivy-java-db:1,ghcr.io/aquasecurity/trivy-java-db:1'
         with:
           scan-type: fs
           scanners: vuln
@@ -260,9 +264,13 @@ jobs:
           output: trivy-deps.sarif
           severity: 'HIGH,CRITICAL'
           ignore-unfixed: true
+        # Reporting is best-effort: the blocking gate below is what enforces
+        # policy. Without this, a scanner or registry outage fails the build
+        # and looks identical to a real vulnerability.
+        continue-on-error: true
 
       - uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        if: always() && hashFiles('trivy-deps.sarif') != ''
         with:
           sarif_file: trivy-deps.sarif
           category: trivy-dependencies
@@ -280,6 +288,10 @@ jobs:
           # offline-scan skips remote POM resolution; jar-level detection via
           # the image scan is unaffected.
           TRIVY_OFFLINE_SCAN: 'true'
+          # The DB defaults to ghcr.io, which rate-limits GitHub runners hard
+          # (TOOMANYREQUESTS). List mirrors first; Trivy falls back in order.
+          TRIVY_DB_REPOSITORY: 'public.ecr.aws/aquasecurity/trivy-db:2,mirror.gcr.io/aquasec/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2'
+          TRIVY_JAVA_DB_REPOSITORY: 'public.ecr.aws/aquasecurity/trivy-java-db:1,mirror.gcr.io/aquasec/trivy-java-db:1,ghcr.io/aquasecurity/trivy-java-db:1'
         with:
           scan-type: fs
           scanners: vuln
@@ -300,6 +312,10 @@ jobs:
           # offline-scan skips remote POM resolution; jar-level detection via
           # the image scan is unaffected.
           TRIVY_OFFLINE_SCAN: 'true'
+          # The DB defaults to ghcr.io, which rate-limits GitHub runners hard
+          # (TOOMANYREQUESTS). List mirrors first; Trivy falls back in order.
+          TRIVY_DB_REPOSITORY: 'public.ecr.aws/aquasecurity/trivy-db:2,mirror.gcr.io/aquasec/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2'
+          TRIVY_JAVA_DB_REPOSITORY: 'public.ecr.aws/aquasecurity/trivy-java-db:1,mirror.gcr.io/aquasec/trivy-java-db:1,ghcr.io/aquasecurity/trivy-java-db:1'
         with:
           scan-type: config
           format: table
@@ -343,6 +359,10 @@ jobs:
           # offline-scan skips remote POM resolution; jar-level detection via
           # the image scan is unaffected.
           TRIVY_OFFLINE_SCAN: 'true'
+          # The DB defaults to ghcr.io, which rate-limits GitHub runners hard
+          # (TOOMANYREQUESTS). List mirrors first; Trivy falls back in order.
+          TRIVY_DB_REPOSITORY: 'public.ecr.aws/aquasecurity/trivy-db:2,mirror.gcr.io/aquasec/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2'
+          TRIVY_JAVA_DB_REPOSITORY: 'public.ecr.aws/aquasecurity/trivy-java-db:1,mirror.gcr.io/aquasec/trivy-java-db:1,ghcr.io/aquasecurity/trivy-java-db:1'
         with:
           scan-type: image
           image-ref: helpdeskpro-${{ matrix.service }}:ci
@@ -350,9 +370,10 @@ jobs:
           output: trivy-image-${{ matrix.service }}.sarif
           severity: 'HIGH,CRITICAL'
           ignore-unfixed: true
+        continue-on-error: true
 
       - uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        if: always() && hashFiles(format('trivy-image-{0}.sarif', matrix.service)) != ''
         with:
           sarif_file: trivy-image-${{ matrix.service }}.sarif
           category: trivy-image-${{ matrix.service }}
