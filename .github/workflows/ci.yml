@@ -244,6 +244,15 @@ jobs:
 
       - name: Trivy — dependency vulnerabilities (SARIF)
         uses: aquasecurity/trivy-action@v0.33.1
+        env:
+          # Trivy's Java analyser resolves POMs from Maven Central to build the
+          # dependency tree. On shared CI egress that returns 429 Too Many
+          # Requests (Retry-After: 1800), Trivy exits FATAL, and because no
+          # report is written the follow-up upload-sarif fails with
+          # "Path does not exist: <file>.sarif". Reproduced locally.
+          # offline-scan skips remote POM resolution; jar-level detection via
+          # the image scan is unaffected.
+          TRIVY_OFFLINE_SCAN: 'true'
         with:
           scan-type: fs
           scanners: vuln
@@ -262,6 +271,15 @@ jobs:
       # unfixable noise never blocks a merge.
       - name: Trivy — fail on fixable HIGH/CRITICAL dependencies
         uses: aquasecurity/trivy-action@v0.33.1
+        env:
+          # Trivy's Java analyser resolves POMs from Maven Central to build the
+          # dependency tree. On shared CI egress that returns 429 Too Many
+          # Requests (Retry-After: 1800), Trivy exits FATAL, and because no
+          # report is written the follow-up upload-sarif fails with
+          # "Path does not exist: <file>.sarif". Reproduced locally.
+          # offline-scan skips remote POM resolution; jar-level detection via
+          # the image scan is unaffected.
+          TRIVY_OFFLINE_SCAN: 'true'
         with:
           scan-type: fs
           scanners: vuln
@@ -273,6 +291,15 @@ jobs:
       # Dockerfile / compose misconfiguration. Reported, not blocking.
       - name: Trivy — IaC & Dockerfile misconfiguration
         uses: aquasecurity/trivy-action@v0.33.1
+        env:
+          # Trivy's Java analyser resolves POMs from Maven Central to build the
+          # dependency tree. On shared CI egress that returns 429 Too Many
+          # Requests (Retry-After: 1800), Trivy exits FATAL, and because no
+          # report is written the follow-up upload-sarif fails with
+          # "Path does not exist: <file>.sarif". Reproduced locally.
+          # offline-scan skips remote POM resolution; jar-level detection via
+          # the image scan is unaffected.
+          TRIVY_OFFLINE_SCAN: 'true'
         with:
           scan-type: config
           format: table
@@ -307,6 +334,15 @@ jobs:
 
       - name: Trivy — image vulnerabilities (SARIF)
         uses: aquasecurity/trivy-action@v0.33.1
+        env:
+          # Trivy's Java analyser resolves POMs from Maven Central to build the
+          # dependency tree. On shared CI egress that returns 429 Too Many
+          # Requests (Retry-After: 1800), Trivy exits FATAL, and because no
+          # report is written the follow-up upload-sarif fails with
+          # "Path does not exist: <file>.sarif". Reproduced locally.
+          # offline-scan skips remote POM resolution; jar-level detection via
+          # the image scan is unaffected.
+          TRIVY_OFFLINE_SCAN: 'true'
         with:
           scan-type: image
           image-ref: helpdeskpro-${{ matrix.service }}:ci
