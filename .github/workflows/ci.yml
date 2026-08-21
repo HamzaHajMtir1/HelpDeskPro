@@ -107,6 +107,11 @@ jobs:
       SMTP_PASSWORD: ci-only-not-a-real-password
       GROQ_API_KEY: ci-only-not-a-real-key
       FRONTEND_BASE_URL: http://localhost:3000
+      # DataInitializer reads app.admin.email / app.admin.password, declared
+      # WITHOUT a default so an unset value fails the boot. The @SpringBootTest
+      # boots the full context, so CI must supply them too. Throwaway values.
+      ADMIN_EMAIL: ci-admin@example.invalid
+      ADMIN_PASSWORD: ci-only-not-a-real-admin-password
 
     steps:
       - uses: actions/checkout@v4
@@ -238,7 +243,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Trivy — dependency vulnerabilities (SARIF)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.33.1
         with:
           scan-type: fs
           scanners: vuln
@@ -256,7 +261,7 @@ jobs:
       # Fail the build on fixable HIGH/CRITICAL only, so low-severity and
       # unfixable noise never blocks a merge.
       - name: Trivy — fail on fixable HIGH/CRITICAL dependencies
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.33.1
         with:
           scan-type: fs
           scanners: vuln
@@ -267,7 +272,7 @@ jobs:
 
       # Dockerfile / compose misconfiguration. Reported, not blocking.
       - name: Trivy — IaC & Dockerfile misconfiguration
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.33.1
         with:
           scan-type: config
           format: table
@@ -301,7 +306,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
       - name: Trivy — image vulnerabilities (SARIF)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.33.1
         with:
           scan-type: image
           image-ref: helpdeskpro-${{ matrix.service }}:ci
