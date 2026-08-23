@@ -9,6 +9,7 @@
 .env
 .env.*
 *.env
+.env.example
 # The *.example templates MUST stay tracked. Negations come last because the
 # last matching rule wins, and they are anchored with **/ so they also apply
 # in subdirectories such as deploy/.
