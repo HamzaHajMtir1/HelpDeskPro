@@ -1,0 +1,64 @@
+# =============================================================================
+# HelpDeskPro — LIVE production stack (OVH VPS cutover)
+# Pulls the CI-published GHCR images. Reuses the EXISTING postgres container
+# (aliased `db` on helpdesk-net) and the EXISTING agent2-api (aliased `agent2`).
+# The frontend image is the edge: it serves the React build AND terminates TLS
+# via the mounted nginx.prod.conf.
+# =============================================================================
+name: helpdeskpro-live
+
+services:
+  backend:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE required}
+    container_name: helpdeskpro-backend
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:?}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:?}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:?}
+      JWT_SECRET: ${JWT_SECRET:?}
+      SMTP_USER: ${SMTP_USER:?}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:?}
+      GROQ_API_KEY: ${GROQ_API_KEY:?}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?}
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:?}
+      AGENT2_URL: ${AGENT2_URL:?}
+      # Hard heap cap for a 3.7GB shared host.
+      JAVA_OPTS: "-Xmx384m -XX:MaxMetaspaceSize=192m -XX:+UseSerialGC"
+    volumes:
+      - /opt/helpdeskpro/uploads:/app/uploads
+    networks:
+      helpdesk-net:
+        aliases: [backend]
+    mem_limit: 900m
+    logging: &log { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+
+  frontend:
+    image: ${FRONTEND_IMAGE:?FRONTEND_IMAGE required}
+    container_name: helpdeskpro-frontend
+    restart: unless-stopped
+    depends_on: [backend]
+    # root so the nginx master can read privkey.pem (workers still drop to nginx)
+    user: root
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /opt/helpdeskpro/nginx.prod.conf:/etc/nginx/conf.d/default.conf:ro
+      - /opt/helpdeskpro/certbot-www:/var/www/certbot
+      - /etc/letsencrypt/live/helpdesk.4d-gile.com:/etc/letsencrypt/live/helpdesk.4d-gile.com:ro
+      - /etc/letsencrypt/archive/helpdesk.4d-gile.com:/etc/letsencrypt/archive/helpdesk.4d-gile.com:ro
+    networks:
+      helpdesk-net:
+        aliases: [frontend]
+    mem_limit: 128m
+    logging: *log
+
+networks:
+  # external + fixed name: the existing postgres and agent2-api are attached
+  # to this same network manually, so `db` and `agent2` resolve.
+  helpdesk-net:
+    name: helpdesk-net
+    external: true
