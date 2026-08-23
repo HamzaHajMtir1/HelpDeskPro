@@ -151,8 +151,12 @@ jobs:
             echo "health=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # deploy.sh already pulls, restarts, verifies health and ROLLS BACK to the
-      # previous image tags if the new release does not come up healthy.
+      # Deploys the LIVE stack that is actually running on the VPS:
+      # /opt/helpdeskpro/docker-compose.live.yml (backend + frontend only,
+      # reusing the existing postgres via the helpdesk-net alias `db`).
+      # It pins the new SHA-tagged images in .env, pulls, brings the two
+      # containers up, health-gates on the real site, and rolls the images
+      # back on failure. postgres and agent2-api are never touched.
       - name: Deploy over SSH
         if: steps.cfg.outputs.enabled == 'true'
         uses: appleboy/ssh-action@v1.2.0
@@ -167,9 +171,44 @@ jobs:
           script: |
             set -Eeuo pipefail
             cd /opt/helpdeskpro
+            COMPOSE="docker compose --env-file .env -f docker-compose.live.yml"
+
+            # remember the currently-deployed images for rollback
+            PREV_BE=$(grep '^BACKEND_IMAGE=' .env | cut -d= -f2-)
+            PREV_FE=$(grep '^FRONTEND_IMAGE=' .env | cut -d= -f2-)
+
             echo "$REGISTRY_TOKEN" | docker login ghcr.io -u "$REGISTRY_USER" --password-stdin
-            ./scripts/deploy.sh "$BACKEND_IMAGE" "$FRONTEND_IMAGE"
-            docker logout ghcr.io
+
+            # pin the new SHA-tagged images (deterministic; enables clean rollback)
+            tmp=$(mktemp)
+            sed -e "s|^BACKEND_IMAGE=.*|BACKEND_IMAGE=${BACKEND_IMAGE}|"                 -e "s|^FRONTEND_IMAGE=.*|FRONTEND_IMAGE=${FRONTEND_IMAGE}|" .env > "$tmp"
+            cat "$tmp" > .env && rm -f "$tmp"
+
+            $COMPOSE pull
+            $COMPOSE up -d
+
+            # health gate: backend container healthy AND the public site returns 200
+            ok=0
+            for i in $(seq 1 30); do
+              h=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{end}}' helpdeskpro-backend 2>/dev/null || true)
+              c=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 8 https://helpdesk.4d-gile.com/ || true)
+              if [ "$h" = "healthy" ] && [ "$c" = "200" ]; then ok=1; break; fi
+              sleep 6
+            done
+
+            if [ "$ok" != "1" ]; then
+              echo "::error::deploy unhealthy - rolling back to $PREV_BE / $PREV_FE"
+              tmp=$(mktemp)
+              sed -e "s|^BACKEND_IMAGE=.*|BACKEND_IMAGE=${PREV_BE}|"                   -e "s|^FRONTEND_IMAGE=.*|FRONTEND_IMAGE=${PREV_FE}|" .env > "$tmp"
+              cat "$tmp" > .env && rm -f "$tmp"
+              $COMPOSE up -d || true
+              docker logout ghcr.io || true
+              exit 1
+            fi
+
+            docker image prune -f >/dev/null 2>&1 || true
+            docker logout ghcr.io || true
+            echo "deployed backend=$BACKEND_IMAGE frontend=$FRONTEND_IMAGE"
         env:
           BACKEND_IMAGE: ${{ needs.publish.outputs.backend_image }}
           FRONTEND_IMAGE: ${{ needs.publish.outputs.frontend_image }}
