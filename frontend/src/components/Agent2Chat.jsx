@@ -5,6 +5,7 @@
 // ✅ Tous les fixes v18 conservés
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { uid } from "../utils/secureRandom";
 
 const FLASK_URL  = "/ai";
 const RED        = "#E31E24";
@@ -13,7 +14,7 @@ const RED_LIGHT  = "#fff1f1";
 const SPRING_URL = "";
 
 function ts()  { return new Date().toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit"}); }
-function uid() { return Date.now() + Math.random(); }
+// uid() imported from utils/secureRandom (crypto-based)
 
 const CLOSED_STATUSES = ["CLÔTURÉ","CLOTURE","CLOTURÉ","CLOSED","RÉSOLU","RESOLU","FERMÉ","FERME"];
 const isClosed = (s) => CLOSED_STATUSES.includes((s||"").toUpperCase().trim());
