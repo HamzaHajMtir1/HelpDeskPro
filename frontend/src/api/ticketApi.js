@@ -36,7 +36,9 @@ export const getUserStats = () => api.get('/admin/users/stats');
 export const uploadAttachment = (ticketId, file) => {
   const formData = new FormData();
   formData.append('file', file);
-  return api.post(`/tickets/${ticketId}/attachments`, formData, {
+  // Encode the user-controlled id before it is placed in the URL path
+  // (Sonar jssecurity:S8476 / S7044).
+  return api.post(`/tickets/${encodeURIComponent(ticketId)}/attachments`, formData, {
     headers: { 'Content-Type': 'multipart/form-data' }
   });
 };

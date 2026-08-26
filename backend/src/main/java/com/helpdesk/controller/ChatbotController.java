@@ -5,6 +5,7 @@ import com.helpdesk.service.GroqService;
 import com.helpdesk.service.KnowledgeService;
 import com.helpdesk.service.TicketService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -12,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/chatbot")
 @RequiredArgsConstructor
@@ -88,10 +90,11 @@ public class ChatbotController {
             return ResponseEntity.ok(res);
 
         } catch (Exception e) {
-            e.printStackTrace(); // ← visible dans les logs Spring Boot
+            // Log server-side (Sonar java:S4507) — never leak the exception
+            // message or class to the client (information disclosure).
+            log.error("Chatbot request failed", e);
             return ResponseEntity.status(500).body(Map.of(
-                    "error", "Erreur interne : " + e.getMessage(),
-                    "cause", e.getClass().getSimpleName()
+                    "error", "Erreur interne. Veuillez réessayer plus tard."
             ));
         }
     }
@@ -133,10 +136,9 @@ public class ChatbotController {
             ));
 
         } catch (Exception e) {
-            e.printStackTrace();
+            log.error("Chatbot request failed", e);
             return ResponseEntity.badRequest().body(Map.of(
-                    "error", e.getMessage(),
-                    "details", e.toString()
+                    "error", "Requête invalide."
             ));
         }
     }

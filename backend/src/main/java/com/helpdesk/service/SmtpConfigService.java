@@ -96,7 +96,12 @@ public class SmtpConfigService {
             props.put("mail.smtp.ssl.protocols",     "TLSv1.2");
         }
 
-        props.put("mail.smtp.ssl.trust",         host);
+        // Verify the SMTP server's certificate hostname (Sonar java:S5527).
+        // The blanket "ssl.trust=host" that used to be here disabled hostname
+        // verification and cert-chain validation, enabling a man-in-the-middle
+        // to capture the mailbox credentials. OVH presents a valid public
+        // certificate, so normal validation + identity check works.
+        props.put("mail.smtp.ssl.checkserveridentity", "true");
         props.put("mail.smtp.connectiontimeout", "5000");
         props.put("mail.smtp.timeout",           "5000");
         props.put("mail.smtp.writetimeout",      "5000");

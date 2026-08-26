@@ -12,14 +12,20 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.Random;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class AuthService {
+
+    // Cryptographically strong RNG for the password-reset OTP. java.util.Random
+    // is predictable from observed output (Sonar java:S2245) — for an account
+    // recovery code that means an attacker could guess it and take over the
+    // account. SecureRandom (a CSPRNG) closes that. Thread-safe; one instance.
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
     private final UserRepository               userRepository;
     private final PasswordEncoder              passwordEncoder;
@@ -165,8 +171,11 @@ public class AuthService {
         // Supprime les anciens codes non utilisés
         tokenRepository.deleteByEmail(email);
 
-        // Génère un code OTP à 6 chiffres
-        String code = String.format("%06d", new Random().nextInt(999999));
+        // Génère un code OTP à 6 chiffres avec un générateur cryptographique.
+        // Plage 0–999999 (l'ancien nextInt(999999) ne produisait jamais 999999) ;
+        // format inchangé (String zéro-paddé à 6 chiffres), donc stockage et
+        // comparaison identiques.
+        String code = String.format("%06d", SECURE_RANDOM.nextInt(1_000_000));
 
         // Sauvegarde avec expiration 15 minutes
         PasswordResetToken token = PasswordResetToken.builder()

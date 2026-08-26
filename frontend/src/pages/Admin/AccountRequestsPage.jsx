@@ -1,5 +1,6 @@
 // pages/admin/AccountRequestsPage.jsx
 import { useEffect, useState, useCallback, useRef } from "react";
+import { generatePassword } from '../../utils/secureRandom';
 import axios from "axios";
 import {
   UserPlus, Check, X, Clock, Building,
@@ -169,8 +170,7 @@ export default function AccountRequestsPage() {
     });
   };
 
-  const generateTempPassword = () =>
-    Math.random().toString(36).slice(-8) + "A1!";
+  const generateTempPassword = () => generatePassword();
 
   const checkEmailAvailable = useCallback(async (email) => {
     if (!email || !email.includes('@')) return;

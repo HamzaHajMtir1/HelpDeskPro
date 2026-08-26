@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { random01 } from '../utils/secureRandom';
 import { motion, AnimatePresence, useInView } from 'framer-motion';
 import axios from 'axios';
 import {
@@ -189,8 +190,8 @@ function WorkflowIllustration() {
     const colors = ['#3b82f6', RED, '#22c55e', '#f59e0b'];
     const newP = Array.from({ length: 6 }, (_, i) => ({
       id: i, color: colors[i % colors.length],
-      x: 10 + Math.random() * 80, y: 10 + Math.random() * 80,
-      tx: 10 + Math.random() * 80, ty: 10 + Math.random() * 80,
+      x: 10 + random01() * 80, y: 10 + random01() * 80,
+      tx: 10 + random01() * 80, ty: 10 + random01() * 80,
     }));
     setParticles(newP);
   }, [step]);

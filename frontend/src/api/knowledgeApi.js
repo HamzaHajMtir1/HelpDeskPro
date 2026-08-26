@@ -9,4 +9,10 @@ export const deleteArticle   = (id)     => api.delete(`/knowledge/${id}`);
 export const getByCategory   = (cat)    => api.get(`/knowledge/category/${cat}`);
 
 // ← AJOUTS
-export const voteArticle     = (id, type) => api.post(`/knowledge/${id}/vote?type=${type}`);
+export const voteArticle     = (id, type) => {
+  // Validate + encode user-controlled data before it reaches the request URL
+  // (Sonar jssecurity:S8476 / S7044): the vote type is whitelisted and the id
+  // is percent-encoded so it cannot inject extra path or query segments.
+  const t = type === 'up' ? 'up' : 'down';
+  return api.post(`/knowledge/${encodeURIComponent(id)}/vote?type=${t}`);
+};
