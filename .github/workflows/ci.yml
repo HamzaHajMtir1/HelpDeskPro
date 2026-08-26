@@ -138,6 +138,15 @@ jobs:
       - name: Check the JaCoCo report was produced
         run: test -f backend/target/site/jacoco/jacoco.xml
 
+      # Give the Sonar Java analyser the dependency classpath, so it resolves
+      # Spring / Lombok / JJWT types instead of guessing. This is what clears the
+      # "Missing sonar.java.libraries" warnings and sharpens the results.
+      # Must run AFTER `clean verify` (which wipes target/) and BEFORE the scan.
+      # sonar-project.properties points sonar.java.libraries at target/dependency.
+      - name: Resolve dependency classpath for SonarQube
+        run: ./mvnw -B -ntp dependency:copy-dependencies -DincludeScope=test -DoutputDirectory=target/dependency
+        working-directory: backend
+
       # --- SonarQube ---------------------------------------------------------
       # Skipped automatically when the secrets are absent, so CI stays usable
       # before SonarQube is reachable from GitHub. NOTE: a SonarQube running on
