@@ -39,3 +39,4 @@ application-secrets.properties
 application-prod-local.properties
 .env
 *.env
+.env.example
